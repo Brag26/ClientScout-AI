@@ -1,6 +1,7 @@
 from apify import Actor
 from apify_client import ApifyClient
 import asyncio
+import os
 
 async def main():
     async with Actor:
@@ -15,8 +16,9 @@ async def main():
         
         Actor.log.info(f"Searching for: {keyword} in {city}")
         
-        # Initialize Apify client with token
-        client = ApifyClient(token=Actor.config.token)
+        # Initialize Apify client with token from environment
+        token = os.environ.get('APIFY_TOKEN')
+        client = ApifyClient(token=token)
         
         # Prepare search query for Google Maps
         search_query = f"{keyword} in {city}"
