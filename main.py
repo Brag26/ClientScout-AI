@@ -1,5 +1,6 @@
 from apify import Actor
 import random
+import asyncio
 
 async def main():
     async with Actor:
@@ -26,6 +27,6 @@ async def main():
         await Actor.push_data(results)
         Actor.log.info(f"Generated {len(results)} leads for sector: {sector}")
 
-# This is the critical missing line - it actually runs the main function
+# Correct entry point for Python
 if __name__ == '__main__':
-    Actor.main(main)
+    asyncio.run(main())
