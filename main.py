@@ -10,22 +10,46 @@ async def main():
         # Get input
         input_data = await Actor.get_input() or {}
         sector = input_data.get("sector", "Healthcare")
-        city = input_data.get("city", "Mumbai")
-        postcode = input_data.get("postcode", "")
-        keyword = input_data.get("keyword", sector)
+        city = input_data.get("city", "").strip()
+        postcode = input_data.get("postcode", "").strip()
+        
+        # Define default keywords for each sector
+        sector_keywords = {
+            "Healthcare": "Doctors, Clinics, Hospitals",
+            "Real Estate": "Real Estate Agents, Property Developers",
+            "Manufacturing": "Manufacturing Companies, Factories",
+            "IT & Startups": "IT Companies, Software Companies, Startups",
+            "Education": "Schools, Colleges, Training Centers"
+        }
+        
+        # Use provided keyword, or default to sector keyword
+        keyword = input_data.get("keyword", "").strip()
+        if not keyword:
+            keyword = sector_keywords.get(sector, sector)
+        
         max_results = input_data.get("maxResults", 10)
         
-        # Build location string with optional postcode
-        location = f"{city} {postcode}".strip() if postcode else city
+        # Build location string intelligently
+        if city and postcode:
+            location = f"{city} {postcode}"
+        elif city:
+            location = city
+        elif postcode:
+            location = postcode
+        else:
+            location = ""
         
-        Actor.log.info(f"Searching for: {keyword} in {location}")
+        # Build search query
+        if location:
+            search_query = f"{keyword} in {location}"
+            Actor.log.info(f"Searching for: {keyword} in {location} (Sector: {sector})")
+        else:
+            search_query = keyword
+            Actor.log.info(f"Searching for: {keyword} (Sector: {sector}, No location specified)")
         
         # Initialize Apify client with token from environment
         token = os.environ.get('APIFY_TOKEN')
         client = ApifyClient(token=token)
-        
-        # Prepare search query for Google Maps
-        search_query = f"{keyword} in {location}"
         
         Actor.log.info(f"Running Google Maps scraper for: {search_query}")
         
@@ -51,8 +75,8 @@ async def main():
                 "name": item.get("title", "N/A"),
                 "sector": sector,
                 "keyword": keyword,
-                "city": city,
-                "postcode": postcode,
+                "city": city if city else "N/A",
+                "postcode": postcode if postcode else "N/A",
                 "phone": item.get("phone", "N/A"),
                 "email": item.get("email", "N/A"),
                 "website": item.get("website", "N/A"),
