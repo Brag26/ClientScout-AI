@@ -1,6 +1,6 @@
 {
-  "title": "Multi-Sector Lead Generator Input",
-  "description": "Generate business leads for different sectors using a single Apify actor.",
+  "title": "Multi-LLM AI-Powered Lead Generator",
+  "description": "Generate business leads using AI (Claude, GPT-4, Gemini, Groq) to intelligently find relevant businesses.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
@@ -13,8 +13,27 @@
         "Healthcare",
         "Real Estate",
         "Manufacturing",
-        "IT & Startups",
-        "Education"
+        "IT & Technology",
+        "Education & Training",
+        "Legal Services",
+        "Financial Services",
+        "Hospitality & Tourism",
+        "Retail & E-commerce",
+        "Food & Beverage",
+        "Construction",
+        "Automotive",
+        "Marketing & Advertising",
+        "Consulting",
+        "Logistics & Transportation",
+        "Beauty & Wellness",
+        "Entertainment & Media",
+        "Agriculture",
+        "Energy & Utilities",
+        "Telecommunications",
+        "Insurance",
+        "Professional Services",
+        "Non-Profit & NGO",
+        "Sports & Fitness"
       ]
     },
     "city": {
@@ -40,7 +59,9 @@
       "description": "Maximum number of leads to generate.",
       "type": "integer",
       "editor": "number",
-      "default": 10
+      "default": 10,
+      "minimum": 1,
+      "maximum": 100
     }
   },
   "required": ["sector"]
