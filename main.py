@@ -15,8 +15,8 @@ async def main():
         
         Actor.log.info(f"Searching for: {keyword} in {city}")
         
-        # Initialize Apify client
-        client = ApifyClient()
+        # Initialize Apify client with token
+        client = ApifyClient(token=Actor.config.token)
         
         # Prepare search query for Google Maps
         search_query = f"{keyword} in {city}"
