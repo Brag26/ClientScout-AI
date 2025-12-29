@@ -11,17 +11,21 @@ async def main():
         input_data = await Actor.get_input() or {}
         sector = input_data.get("sector", "Healthcare")
         city = input_data.get("city", "Mumbai")
+        postcode = input_data.get("postcode", "")
         keyword = input_data.get("keyword", sector)
         max_results = input_data.get("maxResults", 10)
         
-        Actor.log.info(f"Searching for: {keyword} in {city}")
+        # Build location string with optional postcode
+        location = f"{city} {postcode}".strip() if postcode else city
+        
+        Actor.log.info(f"Searching for: {keyword} in {location}")
         
         # Initialize Apify client with token from environment
         token = os.environ.get('APIFY_TOKEN')
         client = ApifyClient(token=token)
         
         # Prepare search query for Google Maps
-        search_query = f"{keyword} in {city}"
+        search_query = f"{keyword} in {location}"
         
         Actor.log.info(f"Running Google Maps scraper for: {search_query}")
         
@@ -48,6 +52,7 @@ async def main():
                 "sector": sector,
                 "keyword": keyword,
                 "city": city,
+                "postcode": postcode,
                 "phone": item.get("phone", "N/A"),
                 "email": item.get("email", "N/A"),
                 "website": item.get("website", "N/A"),
