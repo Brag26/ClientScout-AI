@@ -13,13 +13,32 @@ async def main():
         city = input_data.get("city", "").strip()
         postcode = input_data.get("postcode", "").strip()
         
-        # Define default keywords for each sector
+        # Define comprehensive keywords for each sector
         sector_keywords = {
-            "Healthcare": "Doctors, Clinics, Hospitals",
-            "Real Estate": "Real Estate Agents, Property Developers",
-            "Manufacturing": "Manufacturing Companies, Factories",
-            "IT & Startups": "IT Companies, Software Companies, Startups",
-            "Education": "Schools, Colleges, Training Centers"
+            "Healthcare": "Doctors, Clinics, Hospitals, Medical Centers, Specialists, Dentists, Physiotherapy, Diagnostic Centers",
+            "Real Estate": "Real Estate Agents, Property Developers, Realtors, Real Estate Companies, Property Consultants, Builders",
+            "Manufacturing": "Manufacturing Companies, Factories, Industrial Units, Production Facilities, OEM Manufacturers",
+            "IT & Technology": "IT Companies, Software Companies, Tech Startups, Web Development, App Development, IT Services, Cloud Services",
+            "Education & Training": "Schools, Colleges, Universities, Training Centers, Coaching Classes, Online Education, Tutors",
+            "Legal Services": "Lawyers, Law Firms, Legal Consultants, Attorneys, Advocates, Legal Advisors",
+            "Financial Services": "Banks, Financial Advisors, Investment Firms, Accounting Firms, Tax Consultants, Financial Planners",
+            "Hospitality & Tourism": "Hotels, Resorts, Travel Agencies, Tour Operators, Restaurants, Guest Houses, Holiday Packages",
+            "Retail & E-commerce": "Retail Stores, Shopping Centers, Online Stores, E-commerce, Supermarkets, Outlets",
+            "Food & Beverage": "Restaurants, Cafes, Food Delivery, Catering Services, Bakeries, Cloud Kitchens, Food Manufacturers",
+            "Construction": "Construction Companies, Contractors, Builders, Civil Engineers, Architecture Firms, Interior Designers",
+            "Automotive": "Car Dealers, Auto Repair, Car Service Centers, Vehicle Sales, Auto Parts, Garages",
+            "Marketing & Advertising": "Marketing Agencies, Advertising Firms, Digital Marketing, SEO Services, Creative Agencies, PR Firms",
+            "Consulting": "Business Consultants, Management Consulting, Strategy Consulting, HR Consultants, Advisory Services",
+            "Logistics & Transportation": "Logistics Companies, Freight Forwarders, Courier Services, Transportation Services, Warehousing",
+            "Beauty & Wellness": "Beauty Salons, Spas, Wellness Centers, Gyms, Yoga Studios, Beauty Parlors, Cosmetics",
+            "Entertainment & Media": "Event Planners, Production Houses, Media Companies, Photography Studios, Entertainment Services",
+            "Agriculture": "Agricultural Services, Farming Equipment, Agro Products, Organic Farming, Agricultural Consultants",
+            "Energy & Utilities": "Solar Companies, Energy Consultants, Utility Services, Renewable Energy, Power Solutions",
+            "Telecommunications": "Telecom Companies, Network Providers, Internet Services, Broadband Providers, Mobile Services",
+            "Insurance": "Insurance Companies, Insurance Agents, Insurance Brokers, Life Insurance, Health Insurance",
+            "Professional Services": "Business Services, Corporate Services, Document Services, Translation Services, Notary Services",
+            "Non-Profit & NGO": "NGOs, Charitable Organizations, Non-Profit Organizations, Foundations, Social Services",
+            "Sports & Fitness": "Fitness Centers, Sports Clubs, Personal Trainers, Sports Equipment, Martial Arts, Dance Studios"
         }
         
         # Use provided keyword, or default to sector keyword
