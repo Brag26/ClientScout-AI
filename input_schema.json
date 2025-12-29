@@ -1,0 +1,32 @@
+{
+  "title": "Multi-Sector Lead Generator Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "sector": {
+      "title": "Sector",
+      "type": "string",
+      "enum": [
+        "Healthcare",
+        "Real Estate",
+        "Manufacturing",
+        "IT & Startups",
+        "Education"
+      ]
+    },
+    "city": {
+      "title": "City",
+      "type": "string"
+    },
+    "keyword": {
+      "title": "Keyword",
+      "type": "string"
+    },
+    "maxResults": {
+      "title": "Max Results",
+      "type": "integer",
+      "default": 10
+    }
+  },
+  "required": ["sector", "city"]
+}

@@ -1,0 +1,7 @@
+{
+  "actorSpecification": 1,
+  "name": "multi-sector-lead-generator",
+  "title": "Multi-Sector Lead Generator",
+  "description": "Generate business leads dynamically for multiple sectors using one Apify actor.",
+  "version": "1.0.0"
+}
