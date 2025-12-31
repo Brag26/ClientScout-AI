@@ -7,6 +7,7 @@
 
   "output": {
     "actorOutputSchemaVersion": 1,
+    "type": "object",
     "title": "ClientScout AI – Business Leads",
     "description": "Structured list of business leads discovered using AI-powered Google Maps search.",
     "properties": {
@@ -32,12 +33,12 @@
       },
       "rating": {
         "title": "Rating",
-        "type": "number",
+        "type": "string",
         "template": "{{value}}"
       },
       "reviewCount": {
         "title": "Review Count",
-        "type": "number",
+        "type": "string",
         "template": "{{value}}"
       },
       "category": {
