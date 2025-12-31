@@ -1,7 +1,61 @@
 {
   "actorSpecification": 1,
-  "name": "multi-sector-lead-generator",
-  "title": "Multi-Sector Lead Generator",
-  "description": "Generate business leads dynamically for multiple sectors using one Apify actor.",
-  "version": "1.0.0"
+  "name": "clientscout-ai",
+  "title": "ClientScout AI",
+  "description": "Discover the right clients. Anywhere. AI-powered multi-sector business lead generator using Google Maps.",
+  "version": "1.0.0",
+
+  "output": {
+    "actorOutputSchemaVersion": 1,
+    "title": "ClientScout AI – Business Lead Output",
+    "description": "Structured dataset of business leads discovered across industries and locations using AI-powered Google Maps search.",
+    "properties": {
+      "name": {
+        "title": "Business name",
+        "type": "string",
+        "description": "The name of the business."
+      },
+      "phone": {
+        "title": "Phone number",
+        "type": ["string", "null"],
+        "description": "Business phone number, if available."
+      },
+      "website": {
+        "title": "Website",
+        "type": ["string", "null"],
+        "description": "Official business website URL, if available."
+      },
+      "address": {
+        "title": "Address",
+        "type": "string",
+        "description": "Full business address from Google Maps."
+      },
+      "rating": {
+        "title": "Rating",
+        "type": ["number", "null"],
+        "description": "Average Google Maps rating."
+      },
+      "reviewCount": {
+        "title": "Review count",
+        "type": ["number", "null"],
+        "description": "Total number of Google Maps reviews."
+      },
+      "category": {
+        "title": "Category",
+        "type": ["string", "null"],
+        "description": "Primary business category."
+      },
+      "googleMapsUrl": {
+        "title": "Google Maps URL",
+        "type": "string",
+        "description": "Direct link to the business on Google Maps."
+      },
+      "searchQuery": {
+        "title": "Search query",
+        "type": "string",
+        "description": "The search query used to discover this business."
+      }
+    },
+    "required": ["name", "address", "googleMapsUrl"]
+  }
 }
