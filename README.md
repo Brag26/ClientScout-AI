@@ -1,5 +1,5 @@
 # 🤖 ClientScout AI  
-### Discover the right clients. Anywhere.
+### “AI that finds your next client.”
 
 **ClientScout AI** is an AI-powered, multi-sector business lead generator that discovers **real businesses** using intelligent search queries and Google Maps data.  
 Built for **agencies, sales teams, founders, and BPOs** who need accurate, location-based leads at scale.
@@ -149,4 +149,4 @@ Healthcare, Real Estate, Manufacturing, IT & Technology, Education & Training, L
 ---
 
 ### 🚀 ClientScout AI  
-**Discover the right clients. Anywhere.**
+**“AI that finds your next client.”**
