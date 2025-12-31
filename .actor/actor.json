@@ -8,8 +8,8 @@
   "output": {
     "actorOutputSchemaVersion": 1,
     "type": "object",
-    "title": "ClientScout AI – Business Leads",
-    "description": "Structured list of business leads discovered using AI-powered Google Maps search.",
+    "title": "ClientScout AI – Business Leads Dataset",
+    "description": "Each item represents a discovered business lead from Google Maps.",
     "properties": {
       "name": {
         "title": "Business Name",
@@ -19,12 +19,12 @@
       "phone": {
         "title": "Phone Number",
         "type": "string",
-        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
       },
       "website": {
         "title": "Website",
         "type": "string",
-        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
       },
       "address": {
         "title": "Address",
@@ -34,17 +34,17 @@
       "rating": {
         "title": "Rating",
         "type": "string",
-        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
       },
       "reviewCount": {
         "title": "Review Count",
         "type": "string",
-        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
       },
       "category": {
         "title": "Category",
         "type": "string",
-        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
       },
       "googleMapsUrl": {
         "title": "Google Maps URL",
@@ -52,7 +52,7 @@
         "template": "{{value}}"
       },
       "searchQuery": {
-        "title": "Search Query",
+        "title": "Search Query Used",
         "type": "string",
         "template": "{{value}}"
       }
