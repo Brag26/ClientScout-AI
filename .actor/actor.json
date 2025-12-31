@@ -7,55 +7,54 @@
 
   "output": {
     "actorOutputSchemaVersion": 1,
-    "title": "ClientScout AI – Business Lead Output",
-    "description": "Structured dataset of business leads discovered across industries and locations using AI-powered Google Maps search.",
+    "title": "ClientScout AI – Business Leads",
+    "description": "Structured list of business leads discovered using AI-powered Google Maps search.",
     "properties": {
       "name": {
-        "title": "Business name",
+        "title": "Business Name",
         "type": "string",
-        "description": "The name of the business."
+        "template": "{{value}}"
       },
       "phone": {
-        "title": "Phone number",
-        "type": ["string", "null"],
-        "description": "Business phone number, if available."
+        "title": "Phone Number",
+        "type": "string",
+        "template": "{{value}}"
       },
       "website": {
         "title": "Website",
-        "type": ["string", "null"],
-        "description": "Official business website URL, if available."
+        "type": "string",
+        "template": "{{value}}"
       },
       "address": {
         "title": "Address",
         "type": "string",
-        "description": "Full business address from Google Maps."
+        "template": "{{value}}"
       },
       "rating": {
         "title": "Rating",
-        "type": ["number", "null"],
-        "description": "Average Google Maps rating."
+        "type": "number",
+        "template": "{{value}}"
       },
       "reviewCount": {
-        "title": "Review count",
-        "type": ["number", "null"],
-        "description": "Total number of Google Maps reviews."
+        "title": "Review Count",
+        "type": "number",
+        "template": "{{value}}"
       },
       "category": {
         "title": "Category",
-        "type": ["string", "null"],
-        "description": "Primary business category."
+        "type": "string",
+        "template": "{{value}}"
       },
       "googleMapsUrl": {
         "title": "Google Maps URL",
         "type": "string",
-        "description": "Direct link to the business on Google Maps."
+        "template": "{{value}}"
       },
       "searchQuery": {
-        "title": "Search query",
+        "title": "Search Query",
         "type": "string",
-        "description": "The search query used to discover this business."
+        "template": "{{value}}"
       }
-    },
-    "required": ["name", "address", "googleMapsUrl"]
+    }
   }
 }
