@@ -1,11 +1,12 @@
 {
-  "title": "Multi-LLM AI-Powered Lead Generator",
-  "description": "Generate business leads using AI to intelligently find relevant businesses.",
+  "title": "ClientScout AI – Input",
+  "description": "Input configuration for ClientScout AI to discover business leads by sector and location.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "sector": {
       "title": "Sector",
+      "description": "Select the industry sector for which business leads should be generated.",
       "type": "string",
       "editor": "select",
       "enum": [
@@ -38,37 +39,42 @@
 
     "country": {
       "title": "Country (Optional)",
-      "description": "Enter any country (e.g., India, Australia, USA). Leave empty for global search.",
+      "description": "Enter the country name to limit the search (e.g., India, Australia, USA). Leave empty for broader search.",
       "type": "string",
       "editor": "textfield"
     },
 
     "state": {
       "title": "State / Province (Optional)",
+      "description": "Enter the state or province name for more precise targeting.",
       "type": "string",
       "editor": "textfield"
     },
 
     "city": {
       "title": "City / Suburb (Optional)",
+      "description": "Enter the city or suburb name where businesses should be discovered.",
       "type": "string",
       "editor": "textfield"
     },
 
     "postcode": {
       "title": "Postcode / ZIP Code (Optional)",
+      "description": "Enter a postcode or ZIP code for highly precise location-based discovery.",
       "type": "string",
       "editor": "textfield"
     },
 
     "keyword": {
       "title": "Keyword (Optional)",
+      "description": "Refine searches within the selected sector (e.g., Dermatologist, AI Startup, Builder).",
       "type": "string",
       "editor": "textfield"
     },
 
     "maxResults": {
       "title": "Maximum Results",
+      "description": "Maximum number of business leads to collect. Lower values reduce cost.",
       "type": "integer",
       "default": 10,
       "minimum": 1,
