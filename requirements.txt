@@ -2,3 +2,4 @@ apify
 apify-client
 aiohttp
 pycountry
+requests
