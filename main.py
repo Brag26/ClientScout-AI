@@ -3,6 +3,7 @@ from apify_client import ApifyClient
 import asyncio
 import os
 import time
+import requests
 import pycountry
 
 
@@ -32,7 +33,7 @@ def build_region(country, state=None, city=None):
 
 
 # =====================================================
-# SECTOR → GOOGLE MAPS KEYWORDS
+# SECTOR → GOOGLE MAPS SEARCH TERMS
 # =====================================================
 def sector_keywords(sector, keyword=None):
     if keyword:
@@ -78,6 +79,47 @@ def postcode_valid(item, postcode=None):
 
 
 # =====================================================
+# FIRECRAWL ENRICHMENT (SAFE)
+# =====================================================
+def firecrawl_enrich(url):
+    api_key = os.getenv("FIRECRAWL_API_KEY")
+    if not api_key or not url:
+        return {}
+
+    try:
+        resp = requests.post(
+            "https://api.firecrawl.dev/v1/scrape",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "url": url,
+                "formats": ["markdown"],
+                "limit": 1
+            },
+            timeout=20
+        )
+
+        if resp.status_code != 200:
+            return {}
+
+        text = resp.json().get("data", {}).get("markdown", "")
+
+        emails = list(
+            {word for word in text.split() if "@" in word and "." in word}
+        )[:5]
+
+        return {
+            "emails": emails,
+            "summary": text[:500]
+        }
+
+    except Exception:
+        return {}
+
+
+# =====================================================
 # MAIN ACTOR
 # =====================================================
 async def main():
@@ -87,7 +129,7 @@ async def main():
         input_data = await Actor.get_input() or {}
 
         sector = input_data.get("sector", "")
-        country = input_data.get("country", "").strip()  # REQUIRED
+        country = input_data.get("country", "").strip()   # REQUIRED
         state = input_data.get("state", "").strip()
         city = input_data.get("city", "").strip()
         postcode = input_data.get("postcode", "").strip()
@@ -113,7 +155,7 @@ async def main():
         keywords = sector_keywords(sector, keyword)
 
         Actor.log.info(f"Region anchor: {region}")
-        Actor.log.info(f"Search keywords: {keywords}")
+        Actor.log.info(f"Search terms: {keywords}")
 
         client = ApifyClient(token=os.environ["APIFY_TOKEN"])
 
@@ -121,7 +163,7 @@ async def main():
         seen = set()
 
         # -------------------------------------------------
-        # SEARCH LOOP (GOOGLE-LIKE)
+        # GOOGLE-LIKE SEARCH LOOP
         # -------------------------------------------------
         for term in keywords:
             search_string = f"{term} near {region}"
@@ -176,20 +218,30 @@ async def main():
                 break
 
         # -------------------------------------------------
-        # FINAL OUTPUT
+        # FINAL OUTPUT + FIRECRAWL ENRICHMENT
         # -------------------------------------------------
         output = []
+        enrich_limit = 10  # prevent Firecrawl overuse
+
         for item in collected[:max_results]:
+            website = item.get("website")
+            enrichment = {}
+
+            if website and len(output) < enrich_limit:
+                enrichment = firecrawl_enrich(website)
+
             output.append({
                 "name": item.get("title"),
                 "phone": item.get("phone"),
-                "website": item.get("website"),
+                "website": website,
                 "address": item.get("address"),
                 "rating": item.get("totalScore"),
                 "reviewCount": item.get("reviewsCount"),
                 "category": item.get("categoryName"),
                 "googleMapsUrl": item.get("url"),
-                "searchQuery": keyword or sector
+                "searchQuery": keyword or sector,
+                "emails": enrichment.get("emails", []),
+                "websiteSummary": enrichment.get("summary", "")
             })
 
         await Actor.push_data(output)
