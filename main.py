@@ -5,6 +5,7 @@ import os
 import time
 import requests
 import pycountry
+import re
 
 
 # =====================================================
@@ -79,8 +80,12 @@ def postcode_valid(item, postcode=None):
 
 
 # =====================================================
-# FIRECRAWL ENRICHMENT (SAFE)
+# FIRECRAWL ENRICHMENT (ROBUST + SAFE)
 # =====================================================
+EMAIL_REGEX = re.compile(
+    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+)
+
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
     if not api_key or not url:
@@ -96,7 +101,8 @@ def firecrawl_enrich(url):
             json={
                 "url": url,
                 "formats": ["markdown"],
-                "limit": 1
+                "limit": 3,                  # homepage + contact/about
+                "includeSubdomains": False
             },
             timeout=20
         )
@@ -104,21 +110,19 @@ def firecrawl_enrich(url):
         if resp.status_code != 200:
             return {}
 
-        text = resp.json().get("data", {}).get("markdown", "")
+        text = resp.json().get("data", {}).get("markdown", "") or ""
 
-        emails = list(
-            {word for word in text.split() if "@" in word and "." in word}
-        )[:5]
+        emails = list(set(EMAIL_REGEX.findall(text)))
 
         return {
-            "emails": emails,
-            "summary": text[:500]
+            "emails": emails[:5],
+            "websiteSummary": text[:500]
         }
 
     except Exception:
         return {}
 
-    Actor.log.info(f"Firecrawl text length: {len(text)} for {url}")
+
 # =====================================================
 # MAIN ACTOR
 # =====================================================
@@ -221,7 +225,7 @@ async def main():
         # FINAL OUTPUT + FIRECRAWL ENRICHMENT
         # -------------------------------------------------
         output = []
-        enrich_limit = 10  # prevent Firecrawl overuse
+        enrich_limit = 10   # protect Firecrawl credits
 
         for item in collected[:max_results]:
             website = item.get("website")
@@ -241,7 +245,7 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector,
                 "emails": enrichment.get("emails", []),
-                "websiteSummary": enrichment.get("summary", "")
+                "websiteSummary": enrichment.get("websiteSummary", "")
             })
 
         await Actor.push_data(output)
