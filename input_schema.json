@@ -1,6 +1,6 @@
 {
   "title": "ClientScout AI – Input",
-  "description": "Input configuration for ClientScout AI to discover business leads by sector and location.",
+  "description": "Input configuration for ClientScout AI to discover business leads by sector and country.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
@@ -38,36 +38,36 @@
     },
 
     "country": {
-      "title": "Country (Optional)",
-      "description": "Enter the country name to limit the search (e.g., India, Australia, USA). Leave empty for broader search.",
+      "title": "Country",
+      "description": "Enter the country name where businesses should be discovered (e.g., India, United States, Germany, Australia).",
       "type": "string",
       "editor": "textfield"
     },
 
     "state": {
       "title": "State / Province (Optional)",
-      "description": "Enter the state or province name for more precise targeting.",
+      "description": "Optional state or province for more precise targeting.",
       "type": "string",
       "editor": "textfield"
     },
 
     "city": {
       "title": "City / Suburb (Optional)",
-      "description": "Enter the city or suburb name where businesses should be discovered.",
+      "description": "Optional city or suburb to narrow down the search.",
       "type": "string",
       "editor": "textfield"
     },
 
     "postcode": {
       "title": "Postcode / ZIP Code (Optional)",
-      "description": "Enter a postcode or ZIP code for highly precise location-based discovery.",
+      "description": "Optional postcode or ZIP code for highly precise discovery.",
       "type": "string",
       "editor": "textfield"
     },
 
     "keyword": {
       "title": "Keyword (Optional)",
-      "description": "Refine searches within the selected sector (e.g., Dermatologist, AI Startup, Builder).",
+      "description": "Optional keyword to refine the search (e.g., corrugated box, AI startup, dermatologist).",
       "type": "string",
       "editor": "textfield"
     },
@@ -81,5 +81,5 @@
       "maximum": 100
     }
   },
-  "required": ["sector"]
+  "required": ["sector", "country"]
 }
