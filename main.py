@@ -5,6 +5,29 @@ import os
 import json
 import aiohttp
 import time
+import pycountry
+
+
+# =====================================================
+# ALL-COUNTRY ISO-2 MAPPING (NO HARDCODE)
+# =====================================================
+def get_country_code(country_name: str):
+    """
+    Convert any country name to ISO-2 code for Apify.
+    Examples:
+    India -> in
+    Australia -> au
+    USA / United States -> us
+    Deutschland -> de
+    UAE -> ae
+    """
+    if not country_name:
+        return None
+    try:
+        country = pycountry.countries.lookup(country_name.strip())
+        return country.alpha_2.lower()
+    except LookupError:
+        return None
 
 
 # =====================================================
@@ -12,7 +35,7 @@ import time
 # =====================================================
 async def generate_search_queries_with_llm(sector, keyword, location):
     prompt = f"""
-Generate 6–8 different Google Maps search queries for businesses related to:
+Generate 6–8 Google Maps search queries for businesses related to:
 Sector: {sector}
 Keyword: {keyword}
 Location: {location}
@@ -48,11 +71,32 @@ Rules:
         if not isinstance(parsed, list) or not parsed:
             raise ValueError("Invalid JSON")
 
-        return parsed[:6]  # 🔒 limit but keep diversity
+        return parsed[:6]  # nominal diversity
 
     except Exception as e:
         Actor.log.warning(f"⚠️ LLM failed, fallback used: {e}")
         return [keyword] if keyword else [sector]
+
+
+# =====================================================
+# STRICT LOCATION FILTER (COUNTRY / STATE / CITY / ZIP)
+# =====================================================
+def is_location_valid(item, country=None, state=None, city=None, postcode=None):
+    address = (item.get("address") or "").lower()
+
+    if country and country.lower() not in address:
+        return False
+
+    if state and state.lower() not in address:
+        return False
+
+    if city and city.lower() not in address:
+        return False
+
+    if postcode and postcode.lower() not in address:
+        return False
+
+    return True
 
 
 # =====================================================
@@ -65,12 +109,16 @@ async def main():
         input_data = await Actor.get_input() or {}
 
         sector = input_data.get("sector", "")
-        city = input_data.get("city", "").strip()
+        country = input_data.get("country", "").strip()   # REQUIRED
         state = input_data.get("state", "").strip()
+        city = input_data.get("city", "").strip()
         postcode = input_data.get("postcode", "").strip()
         keyword = input_data.get("keyword", "").strip()
-        country = input_data.get("country", "").strip()
-        max_results = int(input_data.get("maxResults", 10))
+        max_results = int(input_data.get("maxResults", 25))  # nominal default
+
+        Actor.log.info(f"📋 Sector: {sector}")
+        Actor.log.info(f"📍 Location input: {country} | {state} | {city} | {postcode}")
+        Actor.log.info(f"🔢 Max results: {max_results}")
 
         # -------------------------------------------------
         # CREDIT SAFETY
@@ -79,7 +127,6 @@ async def main():
         if remaining:
             try:
                 if float(remaining) < 0.2:
-                    Actor.log.error("❌ Insufficient Apify credits")
                     await Actor.push_data({
                         "error": "Insufficient Apify credits."
                     })
@@ -95,34 +142,31 @@ async def main():
         elif city:
             base_location = f"{city}, {state}" if state else city
         elif state:
-            base_location = f"{state}, {country}" if country else state
-        elif country:
-            base_location = country
+            base_location = f"{state}, {country}"
         else:
-            base_location = ""
+            base_location = country
 
-        Actor.log.info(f"📍 Base location: {base_location}")
+        Actor.log.info(f"📌 Base location used: {base_location}")
 
         # -------------------------------------------------
-        # MULTI QUERY GENERATION (LIKE GOOGLE)
+        # MULTI-QUERY GENERATION
         # -------------------------------------------------
         queries = await generate_search_queries_with_llm(
             sector, keyword, base_location
         )
 
-        Actor.log.info(f"🔎 Queries generated: {queries}")
+        Actor.log.info(f"🔍 Generated queries: {queries}")
 
         client = ApifyClient(token=os.environ["APIFY_TOKEN"])
 
         all_items = []
-        seen_keys = set()
+        seen = set()
 
         # -------------------------------------------------
         # GOOGLE-LIKE SEARCH LOOP
         # -------------------------------------------------
         for query in queries:
             search_string = f"{query} in {base_location}".strip()
-
             Actor.log.info(f"➡️ Searching: {search_string}")
 
             run_input = {
@@ -135,23 +179,11 @@ async def main():
                 "maxCrawledPlacesPerSearch": min(max_results, 25)
             }
 
-            # Country restriction if provided
-            country_map = {
-                "india": "in",
-                "australia": "au",
-                "united states": "us",
-                "usa": "us",
-                "united kingdom": "gb",
-                "uk": "gb",
-                "canada": "ca",
-                "singapore": "sg",
-                "uae": "ae"
-            }
-
-            if country:
-                code = country_map.get(country.lower())
-                if code:
-                    run_input["countryCode"] = code
+            # ALL-COUNTRY MAP (ISO-2)
+            country_code = get_country_code(country)
+            if country_code:
+                run_input["countryCode"] = country_code
+                Actor.log.info(f"🌍 Country locked to: {country_code}")
 
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input
@@ -160,14 +192,13 @@ async def main():
             run_id = run["id"]
             dataset_id = run["defaultDatasetId"]
 
-            # Poll results
             while True:
                 items = list(client.dataset(dataset_id).iterate_items())
 
                 for item in items:
                     key = f"{item.get('title')}_{item.get('address')}"
-                    if key not in seen_keys:
-                        seen_keys.add(key)
+                    if key not in seen:
+                        seen.add(key)
                         all_items.append(item)
 
                 if len(all_items) >= max_results:
@@ -184,11 +215,20 @@ async def main():
                 break
 
         # -------------------------------------------------
-        # FINAL NORMALIZED OUTPUT
+        # FINAL STRICT FILTER + OUTPUT
         # -------------------------------------------------
         final_results = []
 
-        for item in all_items[:max_results]:
+        for item in all_items:
+            if not is_location_valid(
+                item,
+                country=country,
+                state=state,
+                city=city,
+                postcode=postcode
+            ):
+                continue
+
             final_results.append({
                 "name": item.get("title"),
                 "phone": item.get("phone"),
@@ -200,6 +240,9 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector
             })
+
+            if len(final_results) >= max_results:
+                break
 
         await Actor.push_data(final_results)
         Actor.log.info(f"🎉 Finished. {len(final_results)} leads saved.")
