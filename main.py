@@ -8,11 +8,9 @@ import time
 
 
 # =====================================================
-# SAFE AI QUERY GENERATION (NEVER CRASHES)
+# SAFE AI QUERY GENERATION (ONLY GENERATES QUERIES)
 # =====================================================
-async def generate_search_queries_with_llm(sector, keyword, city, postcode, country):
-    location = " ".join(filter(None, [city, postcode, country]))
-
+async def generate_search_queries_with_llm(sector, keyword, location):
     prompt = f"""
 Generate 3–5 Google Maps search queries for {sector} in {location}.
 
@@ -73,40 +71,53 @@ async def main():
 
         Actor.log.info(f"📋 Sector: {sector}")
         Actor.log.info(f"📍 Location: {city} {state} {postcode} {country}")
-        Actor.log.info(f"🔢 Max results requested: {max_results}")
 
         # -------------------------------------------------
-        # 🛑 CREDIT SAFETY GUARD (CRITICAL)
+        # 🛑 CREDIT SAFETY GUARD
         # -------------------------------------------------
         remaining = Actor.get_env().get("APIFY_USER_REMAINING_CREDITS")
         if remaining:
             try:
                 if float(remaining) < 0.2:
-                    Actor.log.error("❌ Not enough Apify credits to start crawler")
+                    Actor.log.error("❌ Not enough Apify credits")
                     await Actor.push_data({
-                        "error": "Insufficient Apify credits. Please upgrade your plan."
+                        "error": "Insufficient Apify credits."
                     })
                     return
             except ValueError:
-                pass  # Ignore parsing issues safely
+                pass
 
         # -------------------------------------------------
-        # Generate ONE safe query
+        # ✅ STRICT LOCATION PRIORITY (CRITICAL FIX)
+        # -------------------------------------------------
+        if postcode:
+            location = postcode
+        elif city:
+            location = f"{city}, {state}" if state else city
+        elif state:
+            location = f"{state}, {country}" if country else state
+        elif country:
+            location = country
+        else:
+            location = ""
+
+        Actor.log.info(f"📌 Final location used: {location}")
+
+        # -------------------------------------------------
+        # Generate ONE query safely
         # -------------------------------------------------
         queries = await generate_search_queries_with_llm(
-            sector, keyword, city, postcode, country
+            sector, keyword, location
         )
         query = queries[0]
 
-        location = " ".join(filter(None, [city, state, postcode, country]))
         search_string = f"{query} in {location}".strip()
-
         Actor.log.info(f"🔍 Searching: {search_string}")
 
         client = ApifyClient(token=os.environ["APIFY_TOKEN"])
 
         # -------------------------------------------------
-        # SAFE, LOW-COST CRAWLER CONFIG
+        # SAFE CRAWLER CONFIG
         # -------------------------------------------------
         run_input = {
             "searchStringsArray": [search_string],
@@ -114,14 +125,12 @@ async def main():
             "includeWebResults": False,
             "maxReviews": 0,
             "maxImages": 0,
-
-            # 🔒 COST CONTROL
             "maxConcurrency": 1,
             "maxCrawledPlacesPerSearch": min(max_results, 5)
         }
 
         # -------------------------------------------------
-        # OPTIONAL: COUNTRY CODE (PREVENT GLOBAL CRAWL)
+        # COUNTRY CODE (LIMIT SEARCH AREA)
         # -------------------------------------------------
         country_map = {
             "india": "in",
@@ -139,40 +148,26 @@ async def main():
             code = country_map.get(country.lower())
             if code:
                 run_input["countryCode"] = code
-            else:
-                Actor.log.warning("⚠️ Country not mapped — running without countryCode (higher cost)")
 
         # -------------------------------------------------
         # START CRAWLER
         # -------------------------------------------------
-        try:
-            run = client.actor("compass/crawler-google-places").start(
-                run_input=run_input
-            )
-        except Exception as e:
-            Actor.log.error(f"❌ Failed to start crawler: {e}")
-            await Actor.push_data({
-                "error": "Crawler could not be started due to credit or configuration limits."
-            })
-            return
+        run = client.actor("compass/crawler-google-places").start(
+            run_input=run_input
+        )
 
         run_id = run["id"]
         dataset_id = run["defaultDatasetId"]
 
         Actor.log.info(f"🚀 Crawler started (runId={run_id})")
 
-        collected = 0
-
         # -------------------------------------------------
-        # POLL + EARLY ABORT (EXTRA SAFETY)
+        # POLL + EARLY ABORT
         # -------------------------------------------------
         while True:
             items = list(client.dataset(dataset_id).iterate_items())
-            collected = len(items)
 
-            Actor.log.info(f"📊 Collected {collected} places so far")
-
-            if collected >= min(max_results, 5):
+            if len(items) >= min(max_results, 5):
                 client.run(run_id).abort()
                 break
 
