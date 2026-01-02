@@ -118,7 +118,7 @@ def firecrawl_enrich(url):
     except Exception:
         return {}
 
-
+    Actor.log.info(f"Firecrawl text length: {len(text)} for {url}")
 # =====================================================
 # MAIN ACTOR
 # =====================================================
