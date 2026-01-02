@@ -8,16 +8,19 @@ import time
 
 
 # =====================================================
-# SAFE AI QUERY GENERATION (ONLY GENERATES QUERIES)
+# AI QUERY GENERATION (MULTI-QUERY, GOOGLE-LIKE)
 # =====================================================
 async def generate_search_queries_with_llm(sector, keyword, location):
     prompt = f"""
-Generate 3–5 Google Maps search queries for {sector} in {location}.
+Generate 6–8 different Google Maps search queries for businesses related to:
+Sector: {sector}
+Keyword: {keyword}
+Location: {location}
 
-RULES:
+Rules:
 - Return ONLY a JSON array
+- Include category-style searches (manufacturers, suppliers, companies, services)
 - No explanation
-- Example: ["clinics", "medical centre", "doctors"]
 """
 
     try:
@@ -45,7 +48,7 @@ RULES:
         if not isinstance(parsed, list) or not parsed:
             raise ValueError("Invalid JSON")
 
-        return parsed
+        return parsed[:6]  # 🔒 limit but keep diversity
 
     except Exception as e:
         Actor.log.warning(f"⚠️ LLM failed, fallback used: {e}")
@@ -61,7 +64,7 @@ async def main():
 
         input_data = await Actor.get_input() or {}
 
-        sector = input_data.get("sector", "Healthcare")
+        sector = input_data.get("sector", "")
         city = input_data.get("city", "").strip()
         state = input_data.get("state", "").strip()
         postcode = input_data.get("postcode", "").strip()
@@ -69,17 +72,14 @@ async def main():
         country = input_data.get("country", "").strip()
         max_results = int(input_data.get("maxResults", 10))
 
-        Actor.log.info(f"📋 Sector: {sector}")
-        Actor.log.info(f"📍 Location: {city} {state} {postcode} {country}")
-
         # -------------------------------------------------
-        # 🛑 CREDIT SAFETY GUARD
+        # CREDIT SAFETY
         # -------------------------------------------------
         remaining = Actor.get_env().get("APIFY_USER_REMAINING_CREDITS")
         if remaining:
             try:
                 if float(remaining) < 0.2:
-                    Actor.log.error("❌ Not enough Apify credits")
+                    Actor.log.error("❌ Insufficient Apify credits")
                     await Actor.push_data({
                         "error": "Insufficient Apify credits."
                     })
@@ -88,119 +88,121 @@ async def main():
                 pass
 
         # -------------------------------------------------
-        # ✅ STRICT LOCATION PRIORITY (CRITICAL FIX)
+        # STRICT LOCATION PRIORITY (GENERIC)
         # -------------------------------------------------
         if postcode:
-            location = postcode
+            base_location = postcode
         elif city:
-            location = f"{city}, {state}" if state else city
+            base_location = f"{city}, {state}" if state else city
         elif state:
-            location = f"{state}, {country}" if country else state
+            base_location = f"{state}, {country}" if country else state
         elif country:
-            location = country
+            base_location = country
         else:
-            location = ""
+            base_location = ""
 
-        Actor.log.info(f"📌 Final location used: {location}")
+        Actor.log.info(f"📍 Base location: {base_location}")
 
         # -------------------------------------------------
-        # Generate ONE query safely
+        # MULTI QUERY GENERATION (LIKE GOOGLE)
         # -------------------------------------------------
         queries = await generate_search_queries_with_llm(
-            sector, keyword, location
+            sector, keyword, base_location
         )
-        query = queries[0]
 
-        search_string = f"{query} in {location}".strip()
-        Actor.log.info(f"🔍 Searching: {search_string}")
+        Actor.log.info(f"🔎 Queries generated: {queries}")
 
         client = ApifyClient(token=os.environ["APIFY_TOKEN"])
 
-        # -------------------------------------------------
-        # SAFE CRAWLER CONFIG
-        # -------------------------------------------------
-        run_input = {
-            "searchStringsArray": [search_string],
-            "language": "en",
-            "includeWebResults": False,
-            "maxReviews": 0,
-            "maxImages": 0,
-            "maxConcurrency": 1,
-            "maxCrawledPlacesPerSearch": min(max_results, 5)
-        }
+        all_items = []
+        seen_keys = set()
 
         # -------------------------------------------------
-        # COUNTRY CODE (LIMIT SEARCH AREA)
+        # GOOGLE-LIKE SEARCH LOOP
         # -------------------------------------------------
-        country_map = {
-            "india": "in",
-            "australia": "au",
-            "united states": "us",
-            "usa": "us",
-            "united kingdom": "gb",
-            "uk": "gb",
-            "canada": "ca",
-            "singapore": "sg",
-            "uae": "ae"
-        }
+        for query in queries:
+            search_string = f"{query} in {base_location}".strip()
 
-        if country:
-            code = country_map.get(country.lower())
-            if code:
-                run_input["countryCode"] = code
+            Actor.log.info(f"➡️ Searching: {search_string}")
 
-        # -------------------------------------------------
-        # START CRAWLER
-        # -------------------------------------------------
-        run = client.actor("compass/crawler-google-places").start(
-            run_input=run_input
-        )
+            run_input = {
+                "searchStringsArray": [search_string],
+                "language": "en",
+                "includeWebResults": False,
+                "maxReviews": 0,
+                "maxImages": 0,
+                "maxConcurrency": 1,
+                "maxCrawledPlacesPerSearch": min(max_results, 20)
+            }
 
-        run_id = run["id"]
-        dataset_id = run["defaultDatasetId"]
+            # Country restriction if provided
+            country_map = {
+                "india": "in",
+                "australia": "au",
+                "united states": "us",
+                "usa": "us",
+                "united kingdom": "gb",
+                "uk": "gb",
+                "canada": "ca",
+                "singapore": "sg",
+                "uae": "ae"
+            }
 
-        Actor.log.info(f"🚀 Crawler started (runId={run_id})")
+            if country:
+                code = country_map.get(country.lower())
+                if code:
+                    run_input["countryCode"] = code
 
-        # -------------------------------------------------
-        # POLL + EARLY ABORT
-        # -------------------------------------------------
-        while True:
-            items = list(client.dataset(dataset_id).iterate_items())
+            run = client.actor("compass/crawler-google-places").start(
+                run_input=run_input
+            )
 
-            if len(items) >= min(max_results, 5):
-                client.run(run_id).abort()
+            run_id = run["id"]
+            dataset_id = run["defaultDatasetId"]
+
+            # Poll results
+            while True:
+                items = list(client.dataset(dataset_id).iterate_items())
+
+                for item in items:
+                    key = f"{item.get('title')}_{item.get('address')}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        all_items.append(item)
+
+                if len(all_items) >= max_results:
+                    client.run(run_id).abort()
+                    break
+
+                if time.time() - START_TIME > 90:
+                    client.run(run_id).abort()
+                    break
+
+                await asyncio.sleep(3)
+
+            if len(all_items) >= max_results:
                 break
 
-            if time.time() - START_TIME > 60:
-                client.run(run_id).abort()
-                break
-
-            await asyncio.sleep(3)
-
         # -------------------------------------------------
-        # DEDUPLICATE + PUSH RESULTS
+        # FINAL NORMALIZED OUTPUT
         # -------------------------------------------------
-        seen = set()
         final_results = []
 
-        for item in items:
-            key = f"{item.get('title')}_{item.get('address')}"
-            if key not in seen:
-                seen.add(key)
-                final_results.append({
-                    "name": item.get("title"),
-                    "phone": item.get("phone"),
-                    "website": item.get("website"),
-                    "address": item.get("address"),
-                    "rating": item.get("totalScore"),
-                    "reviewCount": item.get("reviewsCount"),
-                    "category": item.get("categoryName"),
-                    "googleMapsUrl": item.get("url"),
-                    "searchQuery": query
-                })
+        for item in all_items[:max_results]:
+            final_results.append({
+                "name": item.get("title"),
+                "phone": item.get("phone"),
+                "website": item.get("website"),
+                "address": item.get("address"),
+                "rating": item.get("totalScore"),
+                "reviewCount": item.get("reviewsCount"),
+                "category": item.get("categoryName"),
+                "googleMapsUrl": item.get("url"),
+                "searchQuery": keyword or sector
+            })
 
-        await Actor.push_data(final_results[:max_results])
-        Actor.log.info(f"🎉 Finished safely. {len(final_results)} leads saved.")
+        await Actor.push_data(final_results)
+        Actor.log.info(f"🎉 Finished. {len(final_results)} leads saved.")
 
 
 if __name__ == "__main__":
