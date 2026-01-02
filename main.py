@@ -12,15 +12,6 @@ import pycountry
 # ALL-COUNTRY ISO-2 MAPPING (NO HARDCODE)
 # =====================================================
 def get_country_code(country_name: str):
-    """
-    Convert any country name to ISO-2 code for Apify.
-    Examples:
-    India -> in
-    Australia -> au
-    USA / United States -> us
-    Deutschland -> de
-    UAE -> ae
-    """
     if not country_name:
         return None
     try:
@@ -31,14 +22,28 @@ def get_country_code(country_name: str):
 
 
 # =====================================================
+# BUILD REGION STRING (ANCHORS GOOGLE MAPS SEARCH)
+# Uses "near <region>" instead of brittle filtering
+# =====================================================
+def build_region_string(country, state=None, city=None):
+    parts = []
+    if city:
+        parts.append(city)
+    if state:
+        parts.append(state)
+    parts.append(country)
+    return ", ".join(parts)
+
+
+# =====================================================
 # AI QUERY GENERATION (MULTI-QUERY, GOOGLE-LIKE)
 # =====================================================
-async def generate_search_queries_with_llm(sector, keyword, location):
+async def generate_search_queries_with_llm(sector, keyword, region):
     prompt = f"""
 Generate 6–8 Google Maps search queries for businesses related to:
 Sector: {sector}
 Keyword: {keyword}
-Location: {location}
+Region: {region}
 
 Rules:
 - Return ONLY a JSON array
@@ -79,22 +84,15 @@ Rules:
 
 
 # =====================================================
-# STRICT LOCATION FILTER (COUNTRY / STATE / CITY / ZIP)
+# STRICT POSTCODE FILTER (ONLY WHEN PROVIDED)
+# Country/state/city are handled by REGION-ANCHORED SEARCH
 # =====================================================
-def is_location_valid(item, country=None, state=None, city=None, postcode=None):
+def is_postcode_valid(item, postcode=None):
+    if not postcode:
+        return True
     address = (item.get("address") or "").lower()
+    return postcode.lower() in address
 
-    # Country is always required
-    if country and country.lower() not in address:
-        return False
-
-    # Postcode = strictest
-    if postcode:
-        return postcode.lower() in address
-
-    # City / State are SOFT filters (not hard)
-    # If present in address, good. If not, still accept.
-    return True
 
 # =====================================================
 # MAIN ACTOR
@@ -114,7 +112,7 @@ async def main():
         max_results = int(input_data.get("maxResults", 25))  # nominal default
 
         Actor.log.info(f"📋 Sector: {sector}")
-        Actor.log.info(f"📍 Location input: {country} | {state} | {city} | {postcode}")
+        Actor.log.info(f"📍 Inputs: country={country}, state={state}, city={city}, postcode={postcode}")
         Actor.log.info(f"🔢 Max results: {max_results}")
 
         # -------------------------------------------------
@@ -124,35 +122,24 @@ async def main():
         if remaining:
             try:
                 if float(remaining) < 0.2:
-                    await Actor.push_data({
-                        "error": "Insufficient Apify credits."
-                    })
+                    await Actor.push_data({"error": "Insufficient Apify credits."})
                     return
             except ValueError:
                 pass
 
         # -------------------------------------------------
-        # STRICT LOCATION PRIORITY (GENERIC)
+        # BUILD REGION (ANCHOR SEARCH INSIDE STATE/CITY)
         # -------------------------------------------------
-        if postcode:
-            base_location = postcode
-        elif city:
-            base_location = f"{city}, {state}" if state else city
-        elif state:
-            base_location = f"{state}, {country}"
-        else:
-            base_location = country
-
-        Actor.log.info(f"📌 Base location used: {base_location}")
+        region = build_region_string(country, state=state, city=city)
+        Actor.log.info(f"🧭 Region anchor: {region}")
 
         # -------------------------------------------------
         # MULTI-QUERY GENERATION
         # -------------------------------------------------
         queries = await generate_search_queries_with_llm(
-            sector, keyword, base_location
+            sector, keyword, region
         )
-
-        Actor.log.info(f"🔍 Generated queries: {queries}")
+        Actor.log.info(f"🔍 Queries: {queries}")
 
         client = ApifyClient(token=os.environ["APIFY_TOKEN"])
 
@@ -160,10 +147,11 @@ async def main():
         seen = set()
 
         # -------------------------------------------------
-        # GOOGLE-LIKE SEARCH LOOP
+        # GOOGLE-LIKE SEARCH LOOP (REGION-ANCHORED)
         # -------------------------------------------------
         for query in queries:
-            search_string = f"{query} in {base_location}".strip()
+            # IMPORTANT: use "near <region>" (tighter than "in")
+            search_string = f"{query} near {region}".strip()
             Actor.log.info(f"➡️ Searching: {search_string}")
 
             run_input = {
@@ -176,11 +164,11 @@ async def main():
                 "maxCrawledPlacesPerSearch": min(max_results, 25)
             }
 
-            # ALL-COUNTRY MAP (ISO-2)
+            # Country lock (ALL countries supported)
             country_code = get_country_code(country)
             if country_code:
                 run_input["countryCode"] = country_code
-                Actor.log.info(f"🌍 Country locked to: {country_code}")
+                Actor.log.info(f"🌍 Country locked: {country_code}")
 
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input
@@ -212,18 +200,12 @@ async def main():
                 break
 
         # -------------------------------------------------
-        # FINAL STRICT FILTER + OUTPUT
+        # FINAL OUTPUT (ONLY STRICT POSTCODE FILTER)
         # -------------------------------------------------
         final_results = []
 
         for item in all_items:
-            if not is_location_valid(
-                item,
-                country=country,
-                state=state,
-                city=city,
-                postcode=postcode
-            ):
+            if not is_postcode_valid(item, postcode=postcode):
                 continue
 
             final_results.append({
