@@ -132,7 +132,7 @@ async def main():
                 "maxReviews": 0,
                 "maxImages": 0,
                 "maxConcurrency": 1,
-                "maxCrawledPlacesPerSearch": min(max_results, 20)
+                "maxCrawledPlacesPerSearch": min(max_results, 25)
             }
 
             # Country restriction if provided
