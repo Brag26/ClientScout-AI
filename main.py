@@ -23,7 +23,7 @@ def get_country_code(country_name: str):
 
 # =====================================================
 # BUILD REGION STRING (ANCHORS GOOGLE MAPS SEARCH)
-# Uses "near <region>" instead of brittle filtering
+# Now uses "in <region>" for stronger constraint
 # =====================================================
 def build_region_string(country, state=None, city=None):
     parts = []
@@ -33,6 +33,40 @@ def build_region_string(country, state=None, city=None):
         parts.append(state)
     parts.append(country)
     return ", ".join(parts)
+
+
+# =====================================================
+# STRICT GEOGRAPHIC VALIDATION
+# Ensures results are actually in the specified location
+# =====================================================
+def is_location_valid(item, state=None, city=None, postcode=None):
+    """
+    Validates that the business is in the specified geographic area
+    """
+    address = (item.get("address") or "").lower()
+    
+    if not address:
+        return False
+    
+    # Check postcode if provided
+    if postcode and postcode.lower() not in address:
+        return False
+    
+    # Check state if provided (CRITICAL for Tamil Nadu issue)
+    if state:
+        state_lower = state.lower()
+        # Check for exact match or common abbreviations
+        if state_lower not in address:
+            # Check if abbreviated form is in address (e.g., "TN" for Tamil Nadu)
+            return False
+    
+    # Check city if provided
+    if city:
+        city_lower = city.lower()
+        if city_lower not in address:
+            return False
+    
+    return True
 
 
 # =====================================================
@@ -84,17 +118,6 @@ Rules:
 
 
 # =====================================================
-# STRICT POSTCODE FILTER (ONLY WHEN PROVIDED)
-# Country/state/city are handled by REGION-ANCHORED SEARCH
-# =====================================================
-def is_postcode_valid(item, postcode=None):
-    if not postcode:
-        return True
-    address = (item.get("address") or "").lower()
-    return postcode.lower() in address
-
-
-# =====================================================
 # MAIN ACTOR
 # =====================================================
 async def main():
@@ -109,7 +132,7 @@ async def main():
         city = input_data.get("city", "").strip()
         postcode = input_data.get("postcode", "").strip()
         keyword = input_data.get("keyword", "").strip()
-        max_results = int(input_data.get("maxResults", 25))  # nominal default
+        max_results = int(input_data.get("maxResults", 25))
 
         Actor.log.info(f"📋 Sector: {sector}")
         Actor.log.info(f"📍 Inputs: country={country}, state={state}, city={city}, postcode={postcode}")
@@ -150,8 +173,9 @@ async def main():
         # GOOGLE-LIKE SEARCH LOOP (REGION-ANCHORED)
         # -------------------------------------------------
         for query in queries:
-            # IMPORTANT: use "near <region>" (tighter than "in")
-            search_string = f"{query} near {region}".strip()
+            # CRITICAL FIX: Use "in <region>" instead of "near <region>"
+            # This provides stronger geographic constraint
+            search_string = f"{query} in {region}".strip()
             Actor.log.info(f"➡️ Searching: {search_string}")
 
             run_input = {
@@ -161,7 +185,8 @@ async def main():
                 "maxReviews": 0,
                 "maxImages": 0,
                 "maxConcurrency": 1,
-                "maxCrawledPlacesPerSearch": min(max_results, 25)
+                # Request MORE results to account for filtering
+                "maxCrawledPlacesPerSearch": min(max_results * 3, 75)
             }
 
             # Country lock (ALL countries supported)
@@ -181,16 +206,22 @@ async def main():
                 items = list(client.dataset(dataset_id).iterate_items())
 
                 for item in items:
+                    # CRITICAL FIX: Validate location BEFORE adding
+                    if not is_location_valid(item, state=state, city=city, postcode=postcode):
+                        Actor.log.debug(f"❌ Filtered out: {item.get('title')} - {item.get('address')}")
+                        continue
+                    
                     key = f"{item.get('title')}_{item.get('address')}"
                     if key not in seen:
                         seen.add(key)
                         all_items.append(item)
+                        Actor.log.info(f"✅ Valid result: {item.get('title')} - {item.get('address')}")
 
                 if len(all_items) >= max_results:
                     client.run(run_id).abort()
                     break
 
-                if time.time() - START_TIME > 90:
+                if time.time() - START_TIME > 120:  # Extended timeout for filtering
                     client.run(run_id).abort()
                     break
 
@@ -200,14 +231,11 @@ async def main():
                 break
 
         # -------------------------------------------------
-        # FINAL OUTPUT (ONLY STRICT POSTCODE FILTER)
+        # FINAL OUTPUT
         # -------------------------------------------------
         final_results = []
 
         for item in all_items:
-            if not is_postcode_valid(item, postcode=postcode):
-                continue
-
             final_results.append({
                 "name": item.get("title"),
                 "phone": item.get("phone"),
@@ -225,6 +253,9 @@ async def main():
 
         await Actor.push_data(final_results)
         Actor.log.info(f"🎉 Finished. {len(final_results)} leads saved.")
+        
+        if state and len(final_results) < max_results:
+            Actor.log.warning(f"⚠️ Only found {len(final_results)}/{max_results} results in {state}. Consider expanding search area.")
 
 
 if __name__ == "__main__":
