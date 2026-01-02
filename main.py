@@ -84,20 +84,17 @@ Rules:
 def is_location_valid(item, country=None, state=None, city=None, postcode=None):
     address = (item.get("address") or "").lower()
 
+    # Country is always required
     if country and country.lower() not in address:
         return False
 
-    if state and state.lower() not in address:
-        return False
+    # Postcode = strictest
+    if postcode:
+        return postcode.lower() in address
 
-    if city and city.lower() not in address:
-        return False
-
-    if postcode and postcode.lower() not in address:
-        return False
-
+    # City / State are SOFT filters (not hard)
+    # If present in address, good. If not, still accept.
     return True
-
 
 # =====================================================
 # MAIN ACTOR
