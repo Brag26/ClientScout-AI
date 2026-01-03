@@ -60,7 +60,7 @@ def postcode_valid(item, postcode=None):
 
 
 # =====================================================
-# FIRECRAWL EXTRACTION HELPERS
+# FIRECRAWL EXTRACTION
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 WHATSAPP_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
@@ -89,22 +89,21 @@ def firecrawl_enrich(url):
             timeout=20
         )
 
-        text = resp.json().get("data", {}).get("markdown", "") or ""
+        if resp.status_code != 200:
+            return {"status": "failed"}
 
-        emails = list(set(EMAIL_REGEX.findall(text)))
-        phones = list(set(WHATSAPP_REGEX.findall(text)))
-        contacts = list(set(CONTACT_PAGE_REGEX.findall(text)))
+        text = resp.json().get("data", {}).get("markdown", "") or ""
 
         return {
             "status": "attempted",
-            "emails": emails[:5],
-            "whatsappNumbers": phones[:3],
-            "contactPages": [c[0] for c in contacts][:3],
+            "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
+            "whatsappNumbers": list(set(WHATSAPP_REGEX.findall(text)))[:3],
+            "contactPages": [c[0] for c in CONTACT_PAGE_REGEX.findall(text)][:3],
             "summary": text[:500]
         }
 
     except Exception as e:
-        Actor.log.warning(f"Firecrawl failed: {e}")
+        Actor.log.warning(f"Firecrawl error: {e}")
         return {"status": "failed"}
 
 
@@ -113,7 +112,7 @@ def firecrawl_enrich(url):
 # =====================================================
 async def main():
     async with Actor:
-        start = time.time()
+        start_time = time.time()
         data = await Actor.get_input() or {}
 
         sector = data.get("sector", "")
@@ -126,49 +125,60 @@ async def main():
 
         Actor.log.info(f"Sector: {sector}")
         Actor.log.info(f"Location: {country}, {state}, {city}, {postcode}")
+        Actor.log.info(f"Max results: {max_results}")
 
         region = build_region(country, state, city, postcode)
         keywords = sector_keywords(sector, keyword)
 
+        Actor.log.info(f"Region anchor: {region}")
+        Actor.log.info(f"Search keywords: {keywords}")
+
         client = ApifyClient(os.environ["APIFY_TOKEN"])
+
         seen, collected = set(), []
 
-        # -------------------------------
+        # --------------------------------------------
         # GOOGLE MAPS SEARCH
-        # -------------------------------
+        # --------------------------------------------
         for term in keywords:
-            search = f"{term} near {region}"
-            Actor.log.info(f"Searching: {search}")
+            search_query = f"{term} near {region}"
+            Actor.log.info(f"Searching: {search_query}")
 
             run_input = {
-                "searchStringsArray": [search],
+                "searchStringsArray": [search_query],
                 "language": "en",
                 "includeWebResults": False,
                 "maxReviews": 0,
                 "maxImages": 0,
                 "maxConcurrency": 1,
-                "maxCrawledPlacesPerSearch": min(max_results * 2, 40),
+                "maxCrawledPlacesPerSearch": min(max_results * 2, 40)
             }
 
-            cc = get_country_code(country)
-            if cc:
-                run_input["countryCode"] = cc
+            country_code = get_country_code(country)
+            if country_code:
+                run_input["countryCode"] = country_code
 
-            run = client.actor("compass/crawler-google-places").start(run_input)
-            ds = run["defaultDatasetId"]
+            # ✅ FIXED: keyword argument
+            run = client.actor("compass/crawler-google-places").start(
+                run_input=run_input
+            )
+
+            dataset_id = run["defaultDatasetId"]
             run_id = run["id"]
 
             while True:
-                items = list(client.dataset(ds).iterate_items())
+                items = list(client.dataset(dataset_id).iterate_items())
+
                 for item in items:
                     if not postcode_valid(item, postcode):
                         continue
+
                     key = f"{item.get('title')}_{item.get('address')}"
                     if key not in seen:
                         seen.add(key)
                         collected.append(item)
 
-                if len(collected) >= max_results or time.time() - start > 60:
+                if len(collected) >= max_results or time.time() - start_time > 60:
                     client.run(run_id).abort()
                     break
 
@@ -177,9 +187,9 @@ async def main():
             if len(collected) >= max_results:
                 break
 
-        # -------------------------------
-        # FINAL OUTPUT + ENRICHMENT
-        # -------------------------------
+        # --------------------------------------------
+        # FINAL OUTPUT + FIRECRAWL
+        # --------------------------------------------
         output = []
         enrich_limit = 10
         B2B_SECTORS = ["Manufacturing", "IT & Technology"]
@@ -202,7 +212,7 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector,
 
-                # 🔥 Enrichment
+                # 🔥 Enrichment visibility
                 "firecrawlStatus": enrichment.get("status"),
                 "emails": enrichment.get("emails", []),
                 "whatsappNumbers": enrichment.get("whatsappNumbers", []),
@@ -211,7 +221,7 @@ async def main():
             })
 
         await Actor.push_data(output)
-        Actor.log.info(f"Finished. Leads saved: {len(output)}")
+        Actor.log.info(f"Finished successfully. Leads saved: {len(output)}")
 
 
 if __name__ == "__main__":
