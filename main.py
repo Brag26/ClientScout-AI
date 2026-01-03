@@ -72,7 +72,7 @@ def firecrawl_enrich(url):
     if not api_key or not url:
         return {"status": "skipped"}
 
-    # Force HTTPS (very important)
+    # Force HTTPS
     if url.startswith("http://"):
         url = url.replace("http://", "https://", 1)
 
@@ -80,7 +80,8 @@ def firecrawl_enrich(url):
 
     try:
         resp = None
-        for attempt in range(2):  # retry once
+
+        for _ in range(2):  # retry once
             resp = requests.post(
                 "https://api.firecrawl.dev/v1/scrape",
                 headers={
@@ -97,13 +98,14 @@ def firecrawl_enrich(url):
             if resp.status_code == 200:
                 break
 
-        if resp is None or resp.status_code != 200:
+        if not resp:
+            return {"status": "blocked"}
+
+        if resp.status_code != 200:
             Actor.log.warning(
-                f"Firecrawl failed for {url} "
-                f"status={resp.status_code if resp else 'no_response'} "
-                f"body={(resp.text[:200] if resp else '')}"
+                f"Firecrawl failed for {url} status={resp.status_code}"
             )
-            return {"status": f"failed_{resp.status_code if resp else 'no_response'}"}
+            return {"status": f"failed_{resp.status_code}"}
 
         text = resp.json().get("data", {}).get("markdown", "") or ""
 
@@ -120,8 +122,8 @@ def firecrawl_enrich(url):
         }
 
     except Exception as e:
-        Actor.log.error(f"Firecrawl exception for {url}: {e}")
-        return {"status": "exception"}
+        Actor.log.warning(f"Firecrawl no response / blocked for {url}: {e}")
+        return {"status": "blocked"}
 
 
 # =====================================================
@@ -142,7 +144,6 @@ async def main():
 
         Actor.log.info(f"Sector: {sector}")
         Actor.log.info(f"Location: {country}, {state}, {city}, {postcode}")
-        Actor.log.info(f"Max results: {max_results}")
 
         region = build_region(country, state, city, postcode)
         keywords = sector_keywords(sector, keyword)
@@ -229,7 +230,7 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector,
 
-                # 🔥 Firecrawl visibility
+                # 🔥 Enrichment (final, clean)
                 "firecrawlStatus": enrichment.get("status"),
                 "emails": enrichment.get("emails", []),
                 "whatsappNumbers": enrichment.get("whatsappNumbers", []),
