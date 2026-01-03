@@ -60,7 +60,7 @@ def postcode_valid(item, postcode=None):
 
 
 # =====================================================
-# FIRECRAWL EXTRACTION
+# FIRECRAWL ENRICHMENT (ROBUST + DEBUGGABLE)
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 WHATSAPP_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
@@ -72,39 +72,56 @@ def firecrawl_enrich(url):
     if not api_key or not url:
         return {"status": "skipped"}
 
+    # Force HTTPS (very important)
+    if url.startswith("http://"):
+        url = url.replace("http://", "https://", 1)
+
     Actor.log.info(f"🔥 Firecrawl triggered for {url}")
 
     try:
-        resp = requests.post(
-            "https://api.firecrawl.dev/v1/scrape",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "url": url,
-                "formats": ["markdown"],
-                "limit": 3
-            },
-            timeout=20
-        )
+        resp = None
+        for attempt in range(2):  # retry once
+            resp = requests.post(
+                "https://api.firecrawl.dev/v1/scrape",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "url": url,
+                    "formats": ["markdown"],
+                    "limit": 3
+                },
+                timeout=20
+            )
+            if resp.status_code == 200:
+                break
 
-        if resp.status_code != 200:
-            return {"status": "failed"}
+        if resp is None or resp.status_code != 200:
+            Actor.log.warning(
+                f"Firecrawl failed for {url} "
+                f"status={resp.status_code if resp else 'no_response'} "
+                f"body={(resp.text[:200] if resp else '')}"
+            )
+            return {"status": f"failed_{resp.status_code if resp else 'no_response'}"}
 
         text = resp.json().get("data", {}).get("markdown", "") or ""
 
+        emails = list(set(EMAIL_REGEX.findall(text)))
+        whatsapp = list(set(WHATSAPP_REGEX.findall(text)))
+        contacts = [c[0] for c in CONTACT_PAGE_REGEX.findall(text)]
+
         return {
             "status": "attempted",
-            "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
-            "whatsappNumbers": list(set(WHATSAPP_REGEX.findall(text)))[:3],
-            "contactPages": [c[0] for c in CONTACT_PAGE_REGEX.findall(text)][:3],
+            "emails": emails[:5],
+            "whatsappNumbers": whatsapp[:3],
+            "contactPages": contacts[:3],
             "summary": text[:500]
         }
 
     except Exception as e:
-        Actor.log.warning(f"Firecrawl error: {e}")
-        return {"status": "failed"}
+        Actor.log.error(f"Firecrawl exception for {url}: {e}")
+        return {"status": "exception"}
 
 
 # =====================================================
@@ -135,11 +152,12 @@ async def main():
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
-        seen, collected = set(), []
+        seen = set()
+        collected = []
 
-        # --------------------------------------------
+        # -------------------------------------------------
         # GOOGLE MAPS SEARCH
-        # --------------------------------------------
+        # -------------------------------------------------
         for term in keywords:
             search_query = f"{term} near {region}"
             Actor.log.info(f"Searching: {search_query}")
@@ -154,11 +172,10 @@ async def main():
                 "maxCrawledPlacesPerSearch": min(max_results * 2, 40)
             }
 
-            country_code = get_country_code(country)
-            if country_code:
-                run_input["countryCode"] = country_code
+            cc = get_country_code(country)
+            if cc:
+                run_input["countryCode"] = cc
 
-            # ✅ FIXED: keyword argument
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input
             )
@@ -187,9 +204,9 @@ async def main():
             if len(collected) >= max_results:
                 break
 
-        # --------------------------------------------
+        # -------------------------------------------------
         # FINAL OUTPUT + FIRECRAWL
-        # --------------------------------------------
+        # -------------------------------------------------
         output = []
         enrich_limit = 10
         B2B_SECTORS = ["Manufacturing", "IT & Technology"]
@@ -212,7 +229,7 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector,
 
-                # 🔥 Enrichment visibility
+                # 🔥 Firecrawl visibility
                 "firecrawlStatus": enrichment.get("status"),
                 "emails": enrichment.get("emails", []),
                 "whatsappNumbers": enrichment.get("whatsappNumbers", []),
