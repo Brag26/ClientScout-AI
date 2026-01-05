@@ -9,18 +9,20 @@ import re
 
 
 # =====================================================
-# COUNTRY → ISO-2 CODE
+# HELPERS
 # =====================================================
-def get_country_code(country_name: str):
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
+SOCIAL_REGEX = re.compile(r"(linkedin\.com|facebook\.com|instagram\.com)", re.I)
+
+
+def get_country_code(country):
     try:
-        return pycountry.countries.lookup(country_name).alpha_2.lower()
+        return pycountry.countries.lookup(country).alpha_2.lower()
     except Exception:
         return None
 
 
-# =====================================================
-# REGION BUILDER (POSTCODE > CITY/STATE > COUNTRY)
-# =====================================================
 def build_region(country, state=None, city=None, postcode=None):
     if postcode:
         return f"{postcode}, {country}"
@@ -33,97 +35,99 @@ def build_region(country, state=None, city=None, postcode=None):
     return ", ".join(parts)
 
 
-# =====================================================
-# SECTOR → GOOGLE MAPS SEARCH TERMS
-# =====================================================
 def sector_keywords(sector, keyword=None):
     if keyword:
         return [keyword]
 
-    sector_map = {
-        "Food & Beverage": ["restaurant", "cafe", "food supplier"],
-        "Healthcare": ["hospital", "clinic", "medical centre"],
+    return {
         "Manufacturing": ["manufacturer", "factory", "industrial supplier"],
-        "IT & Technology": ["software company", "IT services"]
-    }
+        "IT & Technology": ["software company", "IT services"],
+        "Healthcare": ["hospital", "clinic"],
+        "Food & Beverage": ["restaurant", "cafe"]
+    }.get(sector, [sector.lower()])
 
-    return sector_map.get(sector, [sector.lower()])
 
-
-# =====================================================
-# POSTCODE FILTER (OPTIONAL)
-# =====================================================
-def postcode_valid(item, postcode=None):
+def postcode_valid(item, postcode):
     if not postcode:
         return True
     return postcode.lower() in (item.get("address") or "").lower()
 
 
 # =====================================================
-# FIRECRAWL ENRICHMENT (ROBUST + DEBUGGABLE)
+# FIRECRAWL (STATIC)
 # =====================================================
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-WHATSAPP_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
-CONTACT_PAGE_REGEX = re.compile(r'href="([^"]*(contact|about)[^"]*)"', re.I)
-
-
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
     if not api_key or not url:
         return {"status": "skipped"}
 
-    # Force HTTPS
     if url.startswith("http://"):
         url = url.replace("http://", "https://", 1)
 
-    Actor.log.info(f"🔥 Firecrawl triggered for {url}")
-
     try:
-        resp = None
-
-        for _ in range(2):  # retry once
-            resp = requests.post(
-                "https://api.firecrawl.dev/v1/scrape",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "url": url,
-                    "formats": ["markdown"],
-                    "limit": 3
-                },
-                timeout=20
-            )
-            if resp.status_code == 200:
-                break
-
-        if not resp:
-            return {"status": "blocked"}
+        resp = requests.post(
+            "https://api.firecrawl.dev/v1/scrape",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={"url": url, "formats": ["markdown"], "limit": 3},
+            timeout=20
+        )
 
         if resp.status_code != 200:
-            Actor.log.warning(
-                f"Firecrawl failed for {url} status={resp.status_code}"
-            )
-            return {"status": f"failed_{resp.status_code}"}
+            return {"status": "blocked"}
 
         text = resp.json().get("data", {}).get("markdown", "") or ""
 
-        emails = list(set(EMAIL_REGEX.findall(text)))
-        whatsapp = list(set(WHATSAPP_REGEX.findall(text)))
-        contacts = [c[0] for c in CONTACT_PAGE_REGEX.findall(text)]
-
         return {
             "status": "attempted",
-            "emails": emails[:5],
-            "whatsappNumbers": whatsapp[:3],
-            "contactPages": contacts[:3],
+            "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
+            "phones": list(set(PHONE_REGEX.findall(text)))[:3],
             "summary": text[:500]
         }
 
-    except Exception as e:
-        Actor.log.warning(f"Firecrawl no response / blocked for {url}: {e}")
+    except Exception:
         return {"status": "blocked"}
+
+
+# =====================================================
+# PLAYWRIGHT FALLBACK (apify/browser-scraper)
+# =====================================================
+def playwright_enrich(client, url):
+    Actor.log.info(f"🧠 Playwright fallback triggered for {url}")
+
+    run = client.actor("apify/browser-scraper").start(
+        run_input={
+            "startUrls": [{"url": url}],
+            "useChrome": True,
+            "headless": True,
+            "waitUntil": "networkidle",
+            "pageFunction": """
+                async ({ page }) => {
+                    const text = await page.evaluate(() => document.body.innerText);
+                    const links = await page.$$eval('a', as => as.map(a => a.href));
+                    return { text, links };
+                }
+            """
+        }
+    )
+
+    dataset_id = run["defaultDatasetId"]
+    items = list(client.dataset(dataset_id).iterate_items())
+
+    if not items:
+        return {"status": "blocked"}
+
+    text = items[0].get("text", "")
+    links = items[0].get("links", [])
+
+    return {
+        "status": "partial",
+        "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
+        "phones": list(set(PHONE_REGEX.findall(text)))[:3],
+        "socialLinks": [l for l in links if SOCIAL_REGEX.search(l)][:5]
+    }
 
 
 # =====================================================
@@ -131,7 +135,7 @@ def firecrawl_enrich(url):
 # =====================================================
 async def main():
     async with Actor:
-        start_time = time.time()
+        start = time.time()
         data = await Actor.get_input() or {}
 
         sector = data.get("sector", "")
@@ -142,35 +146,23 @@ async def main():
         keyword = data.get("keyword", "")
         max_results = int(data.get("maxResults", 25))
 
-        Actor.log.info(f"Sector: {sector}")
-        Actor.log.info(f"Location: {country}, {state}, {city}, {postcode}")
-
         region = build_region(country, state, city, postcode)
         keywords = sector_keywords(sector, keyword)
 
-        Actor.log.info(f"Region anchor: {region}")
-        Actor.log.info(f"Search keywords: {keywords}")
-
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
-        seen = set()
-        collected = []
+        seen, collected = set(), []
 
-        # -------------------------------------------------
-        # GOOGLE MAPS SEARCH
-        # -------------------------------------------------
+        # ---------------- GOOGLE MAPS ----------------
         for term in keywords:
-            search_query = f"{term} near {region}"
-            Actor.log.info(f"Searching: {search_query}")
+            query = f"{term} near {region}"
 
             run_input = {
-                "searchStringsArray": [search_query],
+                "searchStringsArray": [query],
                 "language": "en",
                 "includeWebResults": False,
-                "maxReviews": 0,
-                "maxImages": 0,
-                "maxConcurrency": 1,
-                "maxCrawledPlacesPerSearch": min(max_results * 2, 40)
+                "maxCrawledPlacesPerSearch": min(max_results * 2, 40),
+                "maxConcurrency": 1
             }
 
             cc = get_country_code(country)
@@ -181,22 +173,20 @@ async def main():
                 run_input=run_input
             )
 
-            dataset_id = run["defaultDatasetId"]
+            ds = run["defaultDatasetId"]
             run_id = run["id"]
 
             while True:
-                items = list(client.dataset(dataset_id).iterate_items())
-
+                items = list(client.dataset(ds).iterate_items())
                 for item in items:
                     if not postcode_valid(item, postcode):
                         continue
-
                     key = f"{item.get('title')}_{item.get('address')}"
                     if key not in seen:
                         seen.add(key)
                         collected.append(item)
 
-                if len(collected) >= max_results or time.time() - start_time > 60:
+                if len(collected) >= max_results or time.time() - start > 60:
                     client.run(run_id).abort()
                     break
 
@@ -205,19 +195,27 @@ async def main():
             if len(collected) >= max_results:
                 break
 
-        # -------------------------------------------------
-        # FINAL OUTPUT + FIRECRAWL
-        # -------------------------------------------------
+        # ---------------- ENRICHMENT ----------------
         output = []
-        enrich_limit = 10
-        B2B_SECTORS = ["Manufacturing", "IT & Technology"]
+        MAX_FIRECRAWL = 10
+        MAX_PLAYWRIGHT = 3
+        playwright_used = 0
 
         for item in collected[:max_results]:
             website = item.get("website")
-            enrichment = {"status": "skipped"}
+            enrich = {"status": "skipped"}
 
-            if sector in B2B_SECTORS and website and len(output) < enrich_limit:
-                enrichment = firecrawl_enrich(website)
+            if website and len(output) < MAX_FIRECRAWL:
+                enrich = firecrawl_enrich(website)
+
+            if (
+                enrich.get("status") == "blocked"
+                and website
+                and playwright_used < MAX_PLAYWRIGHT
+                and sector in ["Manufacturing", "IT & Technology"]
+            ):
+                enrich = playwright_enrich(client, website)
+                playwright_used += 1
 
             output.append({
                 "name": item.get("title"),
@@ -230,16 +228,16 @@ async def main():
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": keyword or sector,
 
-                # 🔥 Enrichment (final, clean)
-                "firecrawlStatus": enrichment.get("status"),
-                "emails": enrichment.get("emails", []),
-                "whatsappNumbers": enrichment.get("whatsappNumbers", []),
-                "contactPages": enrichment.get("contactPages", []),
-                "websiteSummary": enrichment.get("summary", "")
+                # enrichment
+                "enrichmentStatus": enrich.get("status"),
+                "emails": enrich.get("emails", []),
+                "phones": enrich.get("phones", []),
+                "socialLinks": enrich.get("socialLinks", []),
+                "websiteSummary": enrich.get("summary", "")
             })
 
         await Actor.push_data(output)
-        Actor.log.info(f"Finished successfully. Leads saved: {len(output)}")
+        Actor.log.info(f"✅ Finished. Leads saved: {len(output)}")
 
 
 if __name__ == "__main__":
