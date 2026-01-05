@@ -9,13 +9,16 @@ import re
 
 
 # =====================================================
-# HELPERS
+# REGEX
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
 SOCIAL_REGEX = re.compile(r"(linkedin\.com|facebook\.com|instagram\.com)", re.I)
 
 
+# =====================================================
+# HELPERS
+# =====================================================
 def get_country_code(country):
     try:
         return pycountry.countries.lookup(country).alpha_2.lower()
@@ -54,7 +57,7 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# FIRECRAWL (STATIC)
+# FIRECRAWL (STATIC SCRAPE)
 # =====================================================
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
@@ -92,21 +95,23 @@ def firecrawl_enrich(url):
 
 
 # =====================================================
-# PLAYWRIGHT FALLBACK (apify/browser-scraper)
+# PLAYWRIGHT FALLBACK (apify/web-scraper)
 # =====================================================
 def playwright_enrich(client, url):
     Actor.log.info(f"🧠 Playwright fallback triggered for {url}")
 
-    run = client.actor("apify/browser-scraper").start(
+    run = client.actor("apify/web-scraper").start(
         run_input={
             "startUrls": [{"url": url}],
-            "useChrome": True,
-            "headless": True,
-            "waitUntil": "networkidle",
+            "renderJavaScript": True,
+            "maxConcurrency": 1,
             "pageFunction": """
                 async ({ page }) => {
-                    const text = await page.evaluate(() => document.body.innerText);
-                    const links = await page.$$eval('a', as => as.map(a => a.href));
+                    await page.waitForTimeout(3000);
+                    const text = document.body.innerText;
+                    const links = Array.from(document.querySelectorAll('a'))
+                        .map(a => a.href)
+                        .filter(Boolean);
                     return { text, links };
                 }
             """
@@ -149,11 +154,17 @@ async def main():
         region = build_region(country, state, city, postcode)
         keywords = sector_keywords(sector, keyword)
 
+        Actor.log.info(f"Region: {region}")
+        Actor.log.info(f"Keywords: {keywords}")
+
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
-        seen, collected = set(), []
+        seen = set()
+        collected = []
 
-        # ---------------- GOOGLE MAPS ----------------
+        # -------------------------------------------------
+        # GOOGLE MAPS SEARCH
+        # -------------------------------------------------
         for term in keywords:
             query = f"{term} near {region}"
 
@@ -178,6 +189,7 @@ async def main():
 
             while True:
                 items = list(client.dataset(ds).iterate_items())
+
                 for item in items:
                     if not postcode_valid(item, postcode):
                         continue
@@ -195,7 +207,9 @@ async def main():
             if len(collected) >= max_results:
                 break
 
-        # ---------------- ENRICHMENT ----------------
+        # -------------------------------------------------
+        # ENRICHMENT
+        # -------------------------------------------------
         output = []
         MAX_FIRECRAWL = 10
         MAX_PLAYWRIGHT = 3
