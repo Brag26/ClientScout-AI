@@ -5,56 +5,62 @@
   "description": "Discover the right clients. Anywhere. AI-powered multi-sector business lead generator using Google Maps.",
   "version": "1.0.0",
 
+  "dockerfile": "./Dockerfile",
+  "input": "./input_schema.json",
+
   "output": {
     "actorOutputSchemaVersion": 1,
-    "type": "object",
+    "type": "array",
     "title": "ClientScout AI – Business Leads Dataset",
     "description": "Each item represents a discovered business lead from Google Maps.",
-    "properties": {
-      "name": {
-        "title": "Business Name",
-        "type": "string",
-        "template": "{{value}}"
-      },
-      "phone": {
-        "title": "Phone Number",
-        "type": "string",
-        "template": "{{value || 'N/A'}}"
-      },
-      "website": {
-        "title": "Website",
-        "type": "string",
-        "template": "{{value || 'N/A'}}"
-      },
-      "address": {
-        "title": "Address",
-        "type": "string",
-        "template": "{{value}}"
-      },
-      "rating": {
-        "title": "Rating",
-        "type": "string",
-        "template": "{{value || 'N/A'}}"
-      },
-      "reviewCount": {
-        "title": "Review Count",
-        "type": "string",
-        "template": "{{value || 'N/A'}}"
-      },
-      "category": {
-        "title": "Category",
-        "type": "string",
-        "template": "{{value || 'N/A'}}"
-      },
-      "googleMapsUrl": {
-        "title": "Google Maps URL",
-        "type": "string",
-        "template": "{{value}}"
-      },
-      "searchQuery": {
-        "title": "Search Query Used",
-        "type": "string",
-        "template": "{{value}}"
+    "items": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Business Name",
+          "type": "string",
+          "template": "{{value}}"
+        },
+        "phone": {
+          "title": "Phone Number",
+          "type": "string",
+          "template": "{{value || 'N/A'}}"
+        },
+        "website": {
+          "title": "Website",
+          "type": "string",
+          "template": "{{value || 'N/A'}}"
+        },
+        "address": {
+          "title": "Address",
+          "type": "string",
+          "template": "{{value}}"
+        },
+        "rating": {
+          "title": "Rating",
+          "type": "string",
+          "template": "{{value || 'N/A'}}"
+        },
+        "reviewCount": {
+          "title": "Review Count",
+          "type": "string",
+          "template": "{{value || 'N/A'}}"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string",
+          "template": "{{value || 'N/A'}}"
+        },
+        "googleMapsUrl": {
+          "title": "Google Maps URL",
+          "type": "string",
+          "template": "{{value}}"
+        },
+        "searchQuery": {
+          "title": "Search Query Used",
+          "type": "string",
+          "template": "{{value}}"
+        }
       }
     }
   }
