@@ -5,33 +5,58 @@
   "description": "Discover the right clients. Anywhere. AI-powered multi-sector business lead generator using Google Maps.",
   "version": "1.0.0",
 
-  "dockerfile": "./Dockerfile",
-  "input": "./input_schema.json",
-
   "output": {
+    "actorOutputSchemaVersion": 1,
     "type": "object",
-    "title": "ClientScout AI Run Summary",
-    "description": "Summary information about the ClientScout AI run.",
+    "title": "ClientScout AI – Business Leads",
+    "description": "Structured list of business leads discovered using AI-powered Google Maps search.",
+    "title": "ClientScout AI – Business Leads Dataset",
+    "description": "Each item represents a discovered business lead from Google Maps.",
     "properties": {
-      "leadsSaved": {
-        "title": "Leads Saved",
-        "type": "integer",
-        "description": "Total number of business leads saved to the dataset."
-      },
-      "firecrawlUsed": {
-        "title": "Firecrawl Used",
-        "type": "integer",
-        "description": "Number of websites enriched using Firecrawl."
-      },
-      "playwrightUsed": {
-        "title": "Playwright Used",
-        "type": "integer",
-        "description": "Number of websites enriched using Playwright headless browser."
-      },
-      "region": {
-        "title": "Search Region",
+      "name": {
+        "title": "Business Name",
+      "phone": {
+        "title": "Phone Number",
         "type": "string",
-        "description": "Geographic region used for lead discovery."
+        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
+      },
+      "website": {
+        "title": "Website",
+        "type": "string",
+        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
+      },
+      "address": {
+        "title": "Address",
+      "rating": {
+        "title": "Rating",
+        "type": "string",
+        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
+      },
+      "reviewCount": {
+        "title": "Review Count",
+        "type": "string",
+        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
+      },
+      "category": {
+        "title": "Category",
+        "type": "string",
+        "template": "{{value}}"
+        "template": "{{value || 'N/A'}}"
+      },
+      "googleMapsUrl": {
+        "title": "Google Maps URL",
+        "type": "string",
+        "template": "{{value}}"
+      },
+      "searchQuery": {
+        "title": "Search Query",
+        "title": "Search Query Used",
+        "type": "string",
+        "template": "{{value}}"
       }
     }
   }
