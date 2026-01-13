@@ -9,58 +9,29 @@
   "input": "./input_schema.json",
 
   "output": {
-    "actorOutputSchemaVersion": 1,
-    "type": "array",
-    "title": "ClientScout AI – Business Leads Dataset",
-    "description": "Each item represents a discovered business lead from Google Maps.",
-    "items": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "title": "Business Name",
-          "type": "string",
-          "template": "{{value}}"
-        },
-        "phone": {
-          "title": "Phone Number",
-          "type": "string",
-          "template": "{{value || 'N/A'}}"
-        },
-        "website": {
-          "title": "Website",
-          "type": "string",
-          "template": "{{value || 'N/A'}}"
-        },
-        "address": {
-          "title": "Address",
-          "type": "string",
-          "template": "{{value}}"
-        },
-        "rating": {
-          "title": "Rating",
-          "type": "string",
-          "template": "{{value || 'N/A'}}"
-        },
-        "reviewCount": {
-          "title": "Review Count",
-          "type": "string",
-          "template": "{{value || 'N/A'}}"
-        },
-        "category": {
-          "title": "Category",
-          "type": "string",
-          "template": "{{value || 'N/A'}}"
-        },
-        "googleMapsUrl": {
-          "title": "Google Maps URL",
-          "type": "string",
-          "template": "{{value}}"
-        },
-        "searchQuery": {
-          "title": "Search Query Used",
-          "type": "string",
-          "template": "{{value}}"
-        }
+    "type": "object",
+    "title": "ClientScout AI Run Summary",
+    "description": "Summary information about the ClientScout AI run.",
+    "properties": {
+      "leadsSaved": {
+        "title": "Leads Saved",
+        "type": "integer",
+        "description": "Total number of business leads saved to the dataset."
+      },
+      "firecrawlUsed": {
+        "title": "Firecrawl Used",
+        "type": "integer",
+        "description": "Number of websites enriched using Firecrawl."
+      },
+      "playwrightUsed": {
+        "title": "Playwright Used",
+        "type": "integer",
+        "description": "Number of websites enriched using Playwright headless browser."
+      },
+      "region": {
+        "title": "Search Region",
+        "type": "string",
+        "description": "Geographic region used for lead discovery."
       }
     }
   }
