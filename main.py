@@ -7,6 +7,10 @@ import requests
 import pycountry
 import re
 
+# =====================================================
+# SAFETY: DISABLE ANY BROWSER USAGE
+# =====================================================
+os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
 
 # =====================================================
 # REGEX
@@ -14,7 +18,6 @@ import re
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
 SOCIAL_REGEX = re.compile(r"(linkedin\.com|facebook\.com|instagram\.com)", re.I)
-
 
 # =====================================================
 # HELPERS
@@ -55,9 +58,8 @@ def postcode_valid(item, postcode):
         return True
     return postcode.lower() in (item.get("address") or "").lower()
 
-
 # =====================================================
-# FIRECRAWL (STATIC SCRAPE)
+# FIRECRAWL (STATIC SCRAPE ONLY)
 # =====================================================
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
@@ -74,7 +76,11 @@ def firecrawl_enrich(url):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
-            json={"url": url, "formats": ["markdown"], "limit": 3},
+            json={
+                "url": url,
+                "formats": ["markdown"],
+                "limit": 3
+            },
             timeout=20
         )
 
@@ -92,48 +98,6 @@ def firecrawl_enrich(url):
 
     except Exception:
         return {"status": "blocked"}
-
-
-# =====================================================
-# PLAYWRIGHT FALLBACK (apify/web-scraper)
-# =====================================================
-def playwright_enrich(client, url):
-    Actor.log.info(f"🧠 Playwright fallback triggered for {url}")
-
-    run = client.actor("apify/web-scraper").start(
-        run_input={
-            "startUrls": [{"url": url}],
-            "renderJavaScript": True,
-            "maxConcurrency": 1,
-            "pageFunction": """
-                async ({ page }) => {
-                    await page.waitForTimeout(3000);
-                    const text = document.body.innerText;
-                    const links = Array.from(document.querySelectorAll('a'))
-                        .map(a => a.href)
-                        .filter(Boolean);
-                    return { text, links };
-                }
-            """
-        }
-    )
-
-    dataset_id = run["defaultDatasetId"]
-    items = list(client.dataset(dataset_id).iterate_items())
-
-    if not items:
-        return {"status": "blocked"}
-
-    text = items[0].get("text", "")
-    links = items[0].get("links", [])
-
-    return {
-        "status": "partial",
-        "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
-        "phones": list(set(PHONE_REGEX.findall(text)))[:3],
-        "socialLinks": [l for l in links if SOCIAL_REGEX.search(l)][:5]
-    }
-
 
 # =====================================================
 # MAIN ACTOR
@@ -193,6 +157,7 @@ async def main():
                 for item in items:
                     if not postcode_valid(item, postcode):
                         continue
+
                     key = f"{item.get('title')}_{item.get('address')}"
                     if key not in seen:
                         seen.add(key)
@@ -208,12 +173,10 @@ async def main():
                 break
 
         # -------------------------------------------------
-        # ENRICHMENT
+        # ENRICHMENT (NO PLAYWRIGHT)
         # -------------------------------------------------
         output = []
         MAX_FIRECRAWL = 10
-        MAX_PLAYWRIGHT = 3
-        playwright_used = 0
 
         for item in collected[:max_results]:
             website = item.get("website")
@@ -221,15 +184,6 @@ async def main():
 
             if website and len(output) < MAX_FIRECRAWL:
                 enrich = firecrawl_enrich(website)
-
-            if (
-                enrich.get("status") == "blocked"
-                and website
-                and playwright_used < MAX_PLAYWRIGHT
-                and sector in ["Manufacturing", "IT & Technology"]
-            ):
-                enrich = playwright_enrich(client, website)
-                playwright_used += 1
 
             output.append({
                 "name": item.get("title"),
@@ -246,7 +200,7 @@ async def main():
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "phones": enrich.get("phones", []),
-                "socialLinks": enrich.get("socialLinks", []),
+                "socialLinks": [],
                 "websiteSummary": enrich.get("summary", "")
             })
 
