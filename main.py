@@ -7,11 +7,20 @@ import requests
 import pycountry
 import re
 
+# =====================================================
+# SAFETY
+# =====================================================
 os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
 
+# =====================================================
+# REGEX
+# =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
 
+# =====================================================
+# HELPERS
+# =====================================================
 def get_country_code(country):
     try:
         return pycountry.countries.lookup(country).alpha_2.lower()
@@ -36,7 +45,9 @@ def postcode_valid(item, postcode):
         return True
     return postcode.lower() in (item.get("address") or "").lower()
 
-
+# =====================================================
+# FIRECRAWL (STATIC ONLY)
+# =====================================================
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
     if not api_key or not url:
@@ -52,7 +63,11 @@ def firecrawl_enrich(url):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
-            json={"url": url, "formats": ["markdown"], "limit": 3},
+            json={
+                "url": url,
+                "formats": ["markdown"],
+                "limit": 3
+            },
             timeout=20
         )
 
@@ -71,10 +86,12 @@ def firecrawl_enrich(url):
     except Exception:
         return {"status": "blocked"}
 
-
+# =====================================================
+# MAIN ACTOR
+# =====================================================
 async def main():
     async with Actor:
-        start = time.time()
+        start_time = time.time()
         data = await Actor.get_input() or {}
 
         country = data.get("country", "")
@@ -83,11 +100,13 @@ async def main():
         postcode = data.get("postcode", "")
         max_results = int(data.get("maxResults", 70))
 
-        # ✅ KEYWORD HANDLING (FIXED)
+        # =================================================
+        # ✅ KEYWORD HANDLING (COMMA BASED — FINAL)
+        # =================================================
         raw = data.get("keywords") or data.get("keyword") or ""
 
         if isinstance(raw, str):
-            keywords = [k.strip() for k in raw.split("+") if k.strip()]
+            keywords = [k.strip() for k in raw.split(",") if k.strip()]
         elif isinstance(raw, list):
             keywords = raw
         else:
@@ -97,13 +116,16 @@ async def main():
 
         Actor.log.info(f"Region: {region}")
         Actor.log.info(f"Total keywords: {len(keywords)}")
-        Actor.log.info(f"Sample keywords: {keywords[:3]}")
+        Actor.log.info(f"Sample keywords: {keywords[:5]}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
         seen = set()
         collected = []
 
+        # =================================================
+        # GOOGLE MAPS SEARCH
+        # =================================================
         for term in keywords:
             query = f"{term} near {region}"
 
@@ -119,16 +141,15 @@ async def main():
             if cc:
                 run_input["countryCode"] = cc
 
-            # ✅ FIXED START CALL
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input
             )
 
-            ds = run["defaultDatasetId"]
+            dataset_id = run["defaultDatasetId"]
             run_id = run["id"]
 
             while True:
-                items = list(client.dataset(ds).iterate_items())
+                items = list(client.dataset(dataset_id).iterate_items())
 
                 for item in items:
                     if not postcode_valid(item, postcode):
@@ -140,7 +161,7 @@ async def main():
                         item["searchQuery"] = term
                         collected.append(item)
 
-                if time.time() - start > 120:
+                if time.time() - start_time > 120:
                     client.run(run_id).abort()
                     break
 
@@ -148,10 +169,16 @@ async def main():
 
         Actor.log.info(f"Collected before cap: {len(collected)}")
 
+        # =================================================
+        # OUTPUT + ENRICHMENT
+        # =================================================
         output = []
+        MAX_FIRECRAWL = 15
+
         for item in collected[:max_results]:
             enrich = {"status": "skipped"}
-            if item.get("website") and len(output) < 15:
+
+            if item.get("website") and len(output) < MAX_FIRECRAWL:
                 enrich = firecrawl_enrich(item.get("website"))
 
             output.append({
