@@ -7,20 +7,11 @@ import requests
 import pycountry
 import re
 
-# =====================================================
-# SAFETY: DISABLE ANY BROWSER USAGE
-# =====================================================
 os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
 
-# =====================================================
-# REGEX
-# =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
 
-# =====================================================
-# HELPERS
-# =====================================================
 def get_country_code(country):
     try:
         return pycountry.countries.lookup(country).alpha_2.lower()
@@ -40,20 +31,12 @@ def build_region(country, state=None, city=None, postcode=None):
     return ", ".join(parts)
 
 
-def sector_keywords(sector):
-    return {
-        "Education": ["school", "tuition center", "home tutor"]
-    }.get(sector, [sector.lower()])
-
-
 def postcode_valid(item, postcode):
     if not postcode:
         return True
     return postcode.lower() in (item.get("address") or "").lower()
 
-# =====================================================
-# FIRECRAWL (STATIC SCRAPE ONLY)
-# =====================================================
+
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
     if not api_key or not url:
@@ -69,11 +52,7 @@ def firecrawl_enrich(url):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
-            json={
-                "url": url,
-                "formats": ["markdown"],
-                "limit": 3
-            },
+            json={"url": url, "formats": ["markdown"], "limit": 3},
             timeout=20
         )
 
@@ -92,46 +71,39 @@ def firecrawl_enrich(url):
     except Exception:
         return {"status": "blocked"}
 
-# =====================================================
-# MAIN ACTOR
-# =====================================================
+
 async def main():
     async with Actor:
         start = time.time()
         data = await Actor.get_input() or {}
 
-        sector = data.get("sector", "")
         country = data.get("country", "")
         state = data.get("state", "")
         city = data.get("city", "")
         postcode = data.get("postcode", "")
         max_results = int(data.get("maxResults", 70))
 
-        # ---------------------------
-        # KEYWORDS (SPLIT FIX)
-        # ---------------------------
-        raw_keywords = data.get("keywords") or data.get("keyword")
+        # ✅ KEYWORD HANDLING (FIXED)
+        raw = data.get("keywords") or data.get("keyword") or ""
 
-        if isinstance(raw_keywords, str):
-            keywords = [k.strip() for k in raw_keywords.split("+") if k.strip()]
-        elif isinstance(raw_keywords, list):
-            keywords = raw_keywords
+        if isinstance(raw, str):
+            keywords = [k.strip() for k in raw.split("+") if k.strip()]
+        elif isinstance(raw, list):
+            keywords = raw
         else:
-            keywords = sector_keywords(sector)
+            keywords = []
 
         region = build_region(country, state, city, postcode)
 
         Actor.log.info(f"Region: {region}")
         Actor.log.info(f"Total keywords: {len(keywords)}")
+        Actor.log.info(f"Sample keywords: {keywords[:3]}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
         seen = set()
         collected = []
 
-        # -------------------------------------------------
-        # GOOGLE MAPS SEARCH (DEPTH FIXED)
-        # -------------------------------------------------
         for term in keywords:
             query = f"{term} near {region}"
 
@@ -139,7 +111,7 @@ async def main():
                 "searchStringsArray": [query],
                 "language": "en",
                 "includeWebResults": False,
-                "maxCrawledPlacesPerSearch": 80,  # FIX 1
+                "maxCrawledPlacesPerSearch": 80,
                 "maxConcurrency": 1
             }
 
@@ -147,7 +119,11 @@ async def main():
             if cc:
                 run_input["countryCode"] = cc
 
-            run = client.actor("compass/crawler-google-places").start(run_input)
+            # ✅ FIXED START CALL
+            run = client.actor("compass/crawler-google-places").start(
+                run_input=run_input
+            )
+
             ds = run["defaultDatasetId"]
             run_id = run["id"]
 
@@ -164,39 +140,30 @@ async def main():
                         item["searchQuery"] = term
                         collected.append(item)
 
-                # FIX 2: no early stop, allow all keywords to contribute
                 if time.time() - start > 120:
                     client.run(run_id).abort()
                     break
 
                 await asyncio.sleep(2)
 
-        Actor.log.info(f"Total collected (before output cap): {len(collected)}")
+        Actor.log.info(f"Collected before cap: {len(collected)}")
 
-        # -------------------------------------------------
-        # ENRICHMENT
-        # -------------------------------------------------
         output = []
-        MAX_FIRECRAWL = 15
-
-        for item in collected[:max_results]:  # FIX 3: higher output cap
-            website = item.get("website")
+        for item in collected[:max_results]:
             enrich = {"status": "skipped"}
-
-            if website and len(output) < MAX_FIRECRAWL:
-                enrich = firecrawl_enrich(website)
+            if item.get("website") and len(output) < 15:
+                enrich = firecrawl_enrich(item.get("website"))
 
             output.append({
                 "name": item.get("title"),
                 "phone": item.get("phone"),
-                "website": website,
+                "website": item.get("website"),
                 "address": item.get("address"),
                 "rating": item.get("totalScore"),
                 "reviewCount": item.get("reviewsCount"),
                 "category": item.get("categoryName"),
                 "googleMapsUrl": item.get("url"),
                 "searchQuery": item.get("searchQuery"),
-
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "phones": enrich.get("phones", []),
