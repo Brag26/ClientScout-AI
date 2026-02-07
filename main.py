@@ -17,7 +17,6 @@ os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
-SOCIAL_REGEX = re.compile(r"(linkedin\.com|facebook\.com|instagram\.com)", re.I)
 
 # =====================================================
 # HELPERS
@@ -43,10 +42,6 @@ def build_region(country, state=None, city=None, postcode=None):
 
 def sector_keywords(sector):
     return {
-        "Manufacturing": ["manufacturer", "factory", "industrial supplier"],
-        "IT & Technology": ["software company", "IT services"],
-        "Healthcare": ["hospital", "clinic"],
-        "Food & Beverage": ["restaurant", "cafe"],
         "Education": ["school", "tuition center", "home tutor"]
     }.get(sector, [sector.lower()])
 
@@ -110,15 +105,15 @@ async def main():
         state = data.get("state", "")
         city = data.get("city", "")
         postcode = data.get("postcode", "")
-        max_results = int(data.get("maxResults", 25))
+        max_results = int(data.get("maxResults", 70))
 
         # ---------------------------
-        # KEYWORD FIX (CRITICAL)
+        # KEYWORDS (SPLIT FIX)
         # ---------------------------
         raw_keywords = data.get("keywords") or data.get("keyword")
 
         if isinstance(raw_keywords, str):
-            keywords = [k.strip() for k in raw_keywords.split(",") if k.strip()]
+            keywords = [k.strip() for k in raw_keywords.split("+") if k.strip()]
         elif isinstance(raw_keywords, list):
             keywords = raw_keywords
         else:
@@ -127,7 +122,7 @@ async def main():
         region = build_region(country, state, city, postcode)
 
         Actor.log.info(f"Region: {region}")
-        Actor.log.info(f"Total keywords after split: {len(keywords)}")
+        Actor.log.info(f"Total keywords: {len(keywords)}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
@@ -135,7 +130,7 @@ async def main():
         collected = []
 
         # -------------------------------------------------
-        # GOOGLE MAPS SEARCH
+        # GOOGLE MAPS SEARCH (DEPTH FIXED)
         # -------------------------------------------------
         for term in keywords:
             query = f"{term} near {region}"
@@ -144,7 +139,7 @@ async def main():
                 "searchStringsArray": [query],
                 "language": "en",
                 "includeWebResults": False,
-                "maxCrawledPlacesPerSearch": min(max_results * 2, 40),
+                "maxCrawledPlacesPerSearch": 80,  # FIX 1
                 "maxConcurrency": 1
             }
 
@@ -152,10 +147,7 @@ async def main():
             if cc:
                 run_input["countryCode"] = cc
 
-            run = client.actor("compass/crawler-google-places").start(
-                run_input=run_input
-            )
-
+            run = client.actor("compass/crawler-google-places").start(run_input)
             ds = run["defaultDatasetId"]
             run_id = run["id"]
 
@@ -169,21 +161,25 @@ async def main():
                     key = f"{item.get('title')}_{item.get('address')}"
                     if key not in seen:
                         seen.add(key)
+                        item["searchQuery"] = term
                         collected.append(item)
 
-                if time.time() - start > 90:
+                # FIX 2: no early stop, allow all keywords to contribute
+                if time.time() - start > 120:
                     client.run(run_id).abort()
                     break
 
                 await asyncio.sleep(2)
 
+        Actor.log.info(f"Total collected (before output cap): {len(collected)}")
+
         # -------------------------------------------------
-        # ENRICHMENT (NO PLAYWRIGHT)
+        # ENRICHMENT
         # -------------------------------------------------
         output = []
-        MAX_FIRECRAWL = 10
+        MAX_FIRECRAWL = 15
 
-        for item in collected[:max_results]:
+        for item in collected[:max_results]:  # FIX 3: higher output cap
             website = item.get("website")
             enrich = {"status": "skipped"}
 
@@ -199,12 +195,11 @@ async def main():
                 "reviewCount": item.get("reviewsCount"),
                 "category": item.get("categoryName"),
                 "googleMapsUrl": item.get("url"),
-                "searchQuery": item.get("searchQuery") if item.get("searchQuery") else "",
+                "searchQuery": item.get("searchQuery"),
 
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "phones": enrich.get("phones", []),
-                "socialLinks": [],
                 "websiteSummary": enrich.get("summary", "")
             })
 
