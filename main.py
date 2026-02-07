@@ -41,15 +41,13 @@ def build_region(country, state=None, city=None, postcode=None):
     return ", ".join(parts)
 
 
-def sector_keywords(sector, keyword=None):
-    if keyword:
-        return [keyword]
-
+def sector_keywords(sector):
     return {
         "Manufacturing": ["manufacturer", "factory", "industrial supplier"],
         "IT & Technology": ["software company", "IT services"],
         "Healthcare": ["hospital", "clinic"],
-        "Food & Beverage": ["restaurant", "cafe"]
+        "Food & Beverage": ["restaurant", "cafe"],
+        "Education": ["school", "tuition center", "home tutor"]
     }.get(sector, [sector.lower()])
 
 
@@ -112,14 +110,24 @@ async def main():
         state = data.get("state", "")
         city = data.get("city", "")
         postcode = data.get("postcode", "")
-        keyword = data.get("keyword", "")
         max_results = int(data.get("maxResults", 25))
 
+        # ---------------------------
+        # KEYWORD FIX (CRITICAL)
+        # ---------------------------
+        raw_keywords = data.get("keywords") or data.get("keyword")
+
+        if isinstance(raw_keywords, str):
+            keywords = [k.strip() for k in raw_keywords.split(",") if k.strip()]
+        elif isinstance(raw_keywords, list):
+            keywords = raw_keywords
+        else:
+            keywords = sector_keywords(sector)
+
         region = build_region(country, state, city, postcode)
-        keywords = sector_keywords(sector, keyword)
 
         Actor.log.info(f"Region: {region}")
-        Actor.log.info(f"Keywords: {keywords}")
+        Actor.log.info(f"Total keywords after split: {len(keywords)}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
@@ -163,14 +171,11 @@ async def main():
                         seen.add(key)
                         collected.append(item)
 
-                if len(collected) >= max_results or time.time() - start > 60:
+                if time.time() - start > 90:
                     client.run(run_id).abort()
                     break
 
                 await asyncio.sleep(2)
-
-            if len(collected) >= max_results:
-                break
 
         # -------------------------------------------------
         # ENRICHMENT (NO PLAYWRIGHT)
@@ -194,9 +199,8 @@ async def main():
                 "reviewCount": item.get("reviewsCount"),
                 "category": item.get("categoryName"),
                 "googleMapsUrl": item.get("url"),
-                "searchQuery": keyword or sector,
+                "searchQuery": item.get("searchQuery") if item.get("searchQuery") else "",
 
-                # enrichment
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "phones": enrich.get("phones", []),
