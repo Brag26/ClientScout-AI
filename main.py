@@ -10,25 +10,15 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
 # =====================================================
-# SAFETY
+# CONFIG
 # =====================================================
-os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
+USE_FIRECRAWL = False  # 🔥 Change to True anytime
+MAX_FIRECRAWL = 15
 
 # =====================================================
 # REGEX
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-COMMON_PREFIXES = ["info", "sales", "contact", "admin", "support"]
-
-COMMON_CONTACT_PATHS = [
-    "/contact",
-    "/contact-us",
-    "/contactus",
-    "/Contact",
-    "/Contact-Us",
-    "/Contact-Us.aspx",
-    "/contact.aspx"
-]
 
 # =====================================================
 # HELPERS
@@ -36,19 +26,14 @@ COMMON_CONTACT_PATHS = [
 def get_country_code(country):
     try:
         return pycountry.countries.lookup(country).alpha_2.lower()
-    except Exception:
+    except:
         return None
 
 
 def build_region(country, state=None, city=None, postcode=None):
     if postcode:
         return f"{postcode}, {country}"
-    parts = []
-    if city:
-        parts.append(city)
-    if state:
-        parts.append(state)
-    parts.append(country)
+    parts = [x for x in [city, state, country] if x]
     return ", ".join(parts)
 
 
@@ -59,91 +44,120 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# SMART FIRECRAWL (MAX 2 CALLS)
+# SIMPLE WEB ENRICH (FREE)
 # =====================================================
-def firecrawl_enrich(url):
-    api_key = os.getenv("FIRECRAWL_API_KEY")
-    if not api_key or not url:
-        return {"status": "skipped", "emails": []}
+def simple_web_enrich(url):
+    if not url:
+        return {"status": "skipped", "emails": [], "persons": []}
 
-    # Skip social sites
     if any(x in url for x in ["facebook.com", "instagram.com", "linkedin.com"]):
-        return {"status": "skipped_social", "emails": []}
+        return {"status": "skipped_social", "emails": [], "persons": []}
 
-    if url.startswith("http://"):
-        url = url.replace("http://", "https://", 1)
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    def scrape_page(target_url):
+    def fetch(target):
         try:
-            resp = requests.post(
-                "https://api.firecrawl.dev/v1/scrape",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "url": target_url,
-                    "formats": ["html"],
-                    "limit": 1
-                },
-                timeout=15
-            )
-
-            if resp.status_code != 200:
-                return None
-
-            return resp.json().get("data", {}).get("html", "")
-
-        except Exception:
+            r = requests.get(target, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.text
+        except:
             return None
+        return None
 
-    def extract_mailto(html):
+    def extract(html):
         soup = BeautifulSoup(html, "html.parser")
+
         emails = []
 
+        # mailto
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
-        return list(set(emails))[:3], soup
+        # visible
+        emails.extend(EMAIL_REGEX.findall(html))
+        emails = list(set(emails))[:5]
 
-    # 1️⃣ Homepage
-    homepage_html = scrape_page(url)
-    if not homepage_html:
-        return {"status": "blocked", "emails": []}
+        persons = []
+        for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
+            text = tag.get_text().strip()
+            if 2 <= len(text.split()) <= 4:
+                if all(w[0].isupper() for w in text.split() if w.isalpha()):
+                    persons.append(text)
 
-    emails, soup = extract_mailto(homepage_html)
+        persons = list(set(persons))[:3]
+
+        return emails, persons
+
+    homepage = fetch(url)
+    if not homepage:
+        return {"status": "blocked", "emails": [], "persons": []}
+
+    emails, persons = extract(homepage)
     if emails:
-        return {"status": "found_homepage", "emails": emails}
+        return {"status": "found_homepage", "emails": emails, "persons": persons}
 
-    # 2️⃣ Try linked contact page
-    contact_url = None
+    # Try contact/about
+    soup = BeautifulSoup(homepage, "html.parser")
     for a in soup.find_all("a", href=True):
-        if "contact" in a["href"].lower():
+        if "contact" in a["href"].lower() or "about" in a["href"].lower():
             contact_url = urljoin(url, a["href"])
-            break
+            contact_page = fetch(contact_url)
+            if contact_page:
+                emails, persons = extract(contact_page)
+                if emails:
+                    return {"status": "found_contact", "emails": emails, "persons": persons}
 
-    # 3️⃣ If not linked, try common paths
-    if not contact_url:
-        for path in COMMON_CONTACT_PATHS:
-            possible_url = urljoin(url, path)
-            contact_url = possible_url
-            break
+    # Domain guess
+    domain = urlparse(url).netloc.replace("www.", "")
+    guessed = [f"info@{domain}", f"contact@{domain}"]
 
-    if contact_url:
-        contact_html = scrape_page(contact_url)
-        if contact_html:
-            emails, _ = extract_mailto(contact_html)
-            if emails:
-                return {"status": "found_contact", "emails": emails}
+    return {"status": "guessed_domain", "emails": guessed, "persons": []}
 
-    # 4️⃣ Smart domain guess
-    parsed = urlparse(url)
-    domain = parsed.netloc.replace("www.", "")
-    guessed_emails = [f"{prefix}@{domain}" for prefix in COMMON_PREFIXES]
 
-    return {"status": "guessed_domain", "emails": guessed_emails[:3]}
+# =====================================================
+# FIRECRAWL ENRICH (OPTIONAL)
+# =====================================================
+def firecrawl_enrich(url):
+    api_key = os.getenv("FIRECRAWL_API_KEY")
+    if not api_key:
+        return {"status": "firecrawl_disabled", "emails": [], "persons": []}
+
+    try:
+        resp = requests.post(
+            "https://api.firecrawl.dev/v1/scrape",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={"url": url, "formats": ["html"], "limit": 1},
+            timeout=15
+        )
+
+        if resp.status_code != 200:
+            return {"status": "firecrawl_failed", "emails": [], "persons": []}
+
+        html = resp.json().get("data", {}).get("html", "")
+        soup = BeautifulSoup(html, "html.parser")
+
+        emails = EMAIL_REGEX.findall(html)
+        emails = list(set(emails))[:5]
+
+        persons = []
+        for tag in soup.find_all(["h1", "h2", "h3"]):
+            text = tag.get_text().strip()
+            if 2 <= len(text.split()) <= 4:
+                persons.append(text)
+
+        return {
+            "status": "firecrawl_success",
+            "emails": emails,
+            "persons": persons[:3]
+        }
+
+    except:
+        return {"status": "firecrawl_error", "emails": [], "persons": []}
 
 
 # =====================================================
@@ -161,82 +175,58 @@ async def main():
         max_results = int(data.get("maxResults", 70))
 
         raw = data.get("keywords") or data.get("keyword") or ""
-
-        if isinstance(raw, str):
-            keywords = [k.strip() for k in raw.split(",") if k.strip()]
-        elif isinstance(raw, list):
-            keywords = raw
-        else:
-            keywords = []
+        keywords = raw.split(",") if isinstance(raw, str) else raw
 
         region = build_region(country, state, city, postcode)
-        Actor.log.info(f"Region: {region}")
-        Actor.log.info(f"Keywords: {keywords[:5]}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
         seen = set()
         collected = []
 
-        # =================================================
-        # GOOGLE MAPS SEARCH
-        # =================================================
         for term in keywords:
-            query = f"{term} near {region}"
+            query = f"{term.strip()} near {region}"
 
             run_input = {
                 "searchStringsArray": [query],
                 "language": "en",
-                "includeWebResults": False,
                 "maxCrawledPlacesPerSearch": 80,
-                "maxConcurrency": 1
             }
 
             cc = get_country_code(country)
             if cc:
                 run_input["countryCode"] = cc
 
-            run = client.actor("compass/crawler-google-places").start(
-                run_input=run_input
-            )
+            run = client.actor("compass/crawler-google-places").start(run_input=run_input)
 
             dataset_id = run["defaultDatasetId"]
-            run_id = run["id"]
 
-            while True:
-                items = list(client.dataset(dataset_id).iterate_items())
+            items = list(client.dataset(dataset_id).iterate_items())
 
-                for item in items:
-                    if not postcode_valid(item, postcode):
-                        continue
+            for item in items:
+                if not postcode_valid(item, postcode):
+                    continue
 
-                    key = f"{item.get('title')}_{item.get('address')}"
-                    if key not in seen:
-                        seen.add(key)
-                        item["searchQuery"] = term
-                        collected.append(item)
+                key = f"{item.get('title')}_{item.get('address')}"
+                if key not in seen:
+                    seen.add(key)
+                    item["searchQuery"] = term
+                    collected.append(item)
 
-                if time.time() - start_time > 120:
-                    client.run(run_id).abort()
-                    break
-
-                await asyncio.sleep(2)
-
-        Actor.log.info(f"Collected before cap: {len(collected)}")
-
-        # =================================================
-        # OUTPUT + ENRICHMENT
-        # =================================================
         output = []
-        MAX_FIRECRAWL = 15
 
-        for item in collected[:max_results]:
-            enrich = {"status": "skipped", "emails": []}
+        for idx, item in enumerate(collected[:max_results]):
 
-            if item.get("website") and len(output) < MAX_FIRECRAWL:
-                enrich = firecrawl_enrich(item.get("website"))
+            if item.get("website"):
+                if USE_FIRECRAWL and idx < MAX_FIRECRAWL:
+                    enrich = firecrawl_enrich(item["website"])
+                    if not enrich.get("emails"):
+                        enrich = simple_web_enrich(item["website"])
+                else:
+                    enrich = simple_web_enrich(item["website"])
+            else:
+                enrich = {"status": "no_website", "emails": [], "persons": []}
 
-            # Extract latitude & longitude
             lat = None
             lng = None
 
@@ -264,7 +254,8 @@ async def main():
                 "longitude": lng,
                 "searchQuery": item.get("searchQuery"),
                 "enrichmentStatus": enrich.get("status"),
-                "emails": enrich.get("emails", [])
+                "emails": enrich.get("emails", []),
+                "contactPersons": enrich.get("persons", [])
             })
 
         await Actor.push_data(output)
