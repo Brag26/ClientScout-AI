@@ -3,3 +3,4 @@ apify-client
 aiohttp
 pycountry
 requests
+beautifulsoup4
