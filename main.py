@@ -6,6 +6,8 @@ import time
 import requests
 import pycountry
 import re
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 
 # =====================================================
 # SAFETY
@@ -17,6 +19,8 @@ os.environ["APIFY_DISABLE_PLAYWRIGHT"] = "1"
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s\-]{8,}\d)")
+
+COMMON_PREFIXES = ["info", "sales", "contact", "admin", "support"]
 
 # =====================================================
 # HELPERS
@@ -45,46 +49,97 @@ def postcode_valid(item, postcode):
         return True
     return postcode.lower() in (item.get("address") or "").lower()
 
+
 # =====================================================
-# FIRECRAWL (STATIC ONLY)
+# SMART FIRECRAWL (CREDIT SAFE)
 # =====================================================
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
     if not api_key or not url:
         return {"status": "skipped"}
 
+    # Skip social websites
+    if any(x in url for x in ["facebook.com", "instagram.com", "linkedin.com"]):
+        return {"status": "skipped_social"}
+
     if url.startswith("http://"):
         url = url.replace("http://", "https://", 1)
 
-    try:
-        resp = requests.post(
-            "https://api.firecrawl.dev/v1/scrape",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "url": url,
-                "formats": ["markdown"],
-                "limit": 3
-            },
-            timeout=20
-        )
+    def scrape_page(target_url):
+        try:
+            resp = requests.post(
+                "https://api.firecrawl.dev/v1/scrape",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "url": target_url,
+                    "formats": ["html"],
+                    "limit": 1
+                },
+                timeout=15
+            )
 
-        if resp.status_code != 200:
-            return {"status": "blocked"}
+            if resp.status_code != 200:
+                return None
 
-        text = resp.json().get("data", {}).get("markdown", "") or ""
+            return resp.json().get("data", {}).get("html", "")
 
+        except Exception:
+            return None
+
+    def extract_mailto(html):
+        soup = BeautifulSoup(html, "html.parser")
+        emails = []
+
+        for a in soup.find_all("a", href=True):
+            if "mailto:" in a["href"]:
+                email = a["href"].replace("mailto:", "").split("?")[0]
+                emails.append(email.strip())
+
+        return list(set(emails))[:3], soup
+
+    # 1️⃣ Homepage
+    homepage_html = scrape_page(url)
+    if not homepage_html:
+        return {"status": "blocked"}
+
+    emails, soup = extract_mailto(homepage_html)
+    if emails:
         return {
-            "status": "attempted",
-            "emails": list(set(EMAIL_REGEX.findall(text)))[:5],
-            "phones": list(set(PHONE_REGEX.findall(text)))[:3],
-            "summary": text[:500]
+            "status": "found_homepage",
+            "emails": emails
         }
 
-    except Exception:
-        return {"status": "blocked"}
+    # 2️⃣ Contact Page (only ONE)
+    contact_url = None
+    for a in soup.find_all("a", href=True):
+        href = a["href"].lower()
+        if "contact" in href:
+            contact_url = urljoin(url, a["href"])
+            break
+
+    if contact_url:
+        contact_html = scrape_page(contact_url)
+        if contact_html:
+            emails, _ = extract_mailto(contact_html)
+            if emails:
+                return {
+                    "status": "found_contact",
+                    "emails": emails
+                }
+
+    # 3️⃣ Smart Domain Guess
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace("www.", "")
+    guessed_emails = [f"{prefix}@{domain}" for prefix in COMMON_PREFIXES]
+
+    return {
+        "status": "guessed_domain",
+        "emails": guessed_emails[:3]
+    }
+
 
 # =====================================================
 # MAIN ACTOR
@@ -100,9 +155,6 @@ async def main():
         postcode = data.get("postcode", "")
         max_results = int(data.get("maxResults", 70))
 
-        # =================================================
-        # ✅ KEYWORD HANDLING (COMMA BASED — FINAL)
-        # =================================================
         raw = data.get("keywords") or data.get("keyword") or ""
 
         if isinstance(raw, str):
@@ -115,8 +167,7 @@ async def main():
         region = build_region(country, state, city, postcode)
 
         Actor.log.info(f"Region: {region}")
-        Actor.log.info(f"Total keywords: {len(keywords)}")
-        Actor.log.info(f"Sample keywords: {keywords[:5]}")
+        Actor.log.info(f"Keywords: {keywords[:5]}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
@@ -176,7 +227,7 @@ async def main():
         MAX_FIRECRAWL = 15
 
         for item in collected[:max_results]:
-            enrich = {"status": "skipped"}
+            enrich = {"status": "skipped", "emails": []}
 
             if item.get("website") and len(output) < MAX_FIRECRAWL:
                 enrich = firecrawl_enrich(item.get("website"))
@@ -190,11 +241,13 @@ async def main():
                 "reviewCount": item.get("reviewsCount"),
                 "category": item.get("categoryName"),
                 "googleMapsUrl": item.get("url"),
+                "image": (
+                    item.get("imageUrl") or
+                    (item.get("imageUrls")[0] if item.get("imageUrls") else None)
+                ),
                 "searchQuery": item.get("searchQuery"),
                 "enrichmentStatus": enrich.get("status"),
-                "emails": enrich.get("emails", []),
-                "phones": enrich.get("phones", []),
-                "websiteSummary": enrich.get("summary", "")
+                "emails": enrich.get("emails", [])
             })
 
         await Actor.push_data(output)
