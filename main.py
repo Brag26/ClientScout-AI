@@ -12,8 +12,10 @@ from urllib.parse import urljoin, urlparse
 # =====================================================
 # CONFIG
 # =====================================================
-USE_FIRECRAWL = False  # 🔥 Change to True anytime
+USE_FIRECRAWL = False
 MAX_FIRECRAWL = 15
+GOOGLE_MEMORY_MB = 1024
+GOOGLE_TIMEOUT_SEC = 120
 
 # =====================================================
 # REGEX
@@ -44,7 +46,7 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# SIMPLE WEB ENRICH (FREE)
+# SIMPLE WEBSITE ENRICHMENT (FREE)
 # =====================================================
 def simple_web_enrich(url):
     if not url:
@@ -66,16 +68,13 @@ def simple_web_enrich(url):
 
     def extract(html):
         soup = BeautifulSoup(html, "html.parser")
-
         emails = []
 
-        # mailto
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
-        # visible
         emails.extend(EMAIL_REGEX.findall(html))
         emails = list(set(emails))[:5]
 
@@ -98,8 +97,8 @@ def simple_web_enrich(url):
     if emails:
         return {"status": "found_homepage", "emails": emails, "persons": persons}
 
-    # Try contact/about
     soup = BeautifulSoup(homepage, "html.parser")
+
     for a in soup.find_all("a", href=True):
         if "contact" in a["href"].lower() or "about" in a["href"].lower():
             contact_url = urljoin(url, a["href"])
@@ -109,7 +108,6 @@ def simple_web_enrich(url):
                 if emails:
                     return {"status": "found_contact", "emails": emails, "persons": persons}
 
-    # Domain guess
     domain = urlparse(url).netloc.replace("www.", "")
     guessed = [f"info@{domain}", f"contact@{domain}"]
 
@@ -117,7 +115,7 @@ def simple_web_enrich(url):
 
 
 # =====================================================
-# FIRECRAWL ENRICH (OPTIONAL)
+# FIRECRAWL (OPTIONAL)
 # =====================================================
 def firecrawl_enrich(url):
     api_key = os.getenv("FIRECRAWL_API_KEY")
@@ -139,21 +137,12 @@ def firecrawl_enrich(url):
             return {"status": "firecrawl_failed", "emails": [], "persons": []}
 
         html = resp.json().get("data", {}).get("html", "")
-        soup = BeautifulSoup(html, "html.parser")
-
-        emails = EMAIL_REGEX.findall(html)
-        emails = list(set(emails))[:5]
-
-        persons = []
-        for tag in soup.find_all(["h1", "h2", "h3"]):
-            text = tag.get_text().strip()
-            if 2 <= len(text.split()) <= 4:
-                persons.append(text)
+        emails = list(set(EMAIL_REGEX.findall(html)))[:5]
 
         return {
             "status": "firecrawl_success",
             "emails": emails,
-            "persons": persons[:3]
+            "persons": []
         }
 
     except:
@@ -165,7 +154,6 @@ def firecrawl_enrich(url):
 # =====================================================
 async def main():
     async with Actor:
-        start_time = time.time()
         data = await Actor.get_input() or {}
 
         country = data.get("country", "")
@@ -191,19 +179,23 @@ async def main():
                 "searchStringsArray": [query],
                 "language": "en",
                 "maxCrawledPlacesPerSearch": 80,
+                "maxConcurrency": 1
             }
 
             cc = get_country_code(country)
             if cc:
                 run_input["countryCode"] = cc
 
-            run = client.actor("compass/crawler-google-places").start(run_input=run_input)
+            run = client.actor("compass/crawler-google-places").start(
+                run_input=run_input,
+                memory=GOOGLE_MEMORY_MB,
+                timeout=GOOGLE_TIMEOUT_SEC
+            )
 
-            dataset_id = run["defaultDatasetId"]
+            dataset = client.dataset(run["defaultDatasetId"])
 
-            items = list(client.dataset(dataset_id).iterate_items())
-
-            for item in items:
+            # STREAMING iteration (memory safe)
+            for item in dataset.iterate_items():
                 if not postcode_valid(item, postcode):
                     continue
 
