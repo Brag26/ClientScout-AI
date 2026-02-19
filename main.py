@@ -2,7 +2,6 @@ from apify import Actor
 from apify_client import ApifyClient
 import asyncio
 import os
-import time
 import requests
 import pycountry
 import re
@@ -46,7 +45,7 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# SIMPLE WEBSITE ENRICHMENT (FREE)
+# SIMPLE WEBSITE ENRICHMENT
 # =====================================================
 def simple_web_enrich(url):
     if not url:
@@ -98,7 +97,6 @@ def simple_web_enrich(url):
         return {"status": "found_homepage", "emails": emails, "persons": persons}
 
     soup = BeautifulSoup(homepage, "html.parser")
-
     for a in soup.find_all("a", href=True):
         if "contact" in a["href"].lower() or "about" in a["href"].lower():
             contact_url = urljoin(url, a["href"])
@@ -112,41 +110,6 @@ def simple_web_enrich(url):
     guessed = [f"info@{domain}", f"contact@{domain}"]
 
     return {"status": "guessed_domain", "emails": guessed, "persons": []}
-
-
-# =====================================================
-# FIRECRAWL (OPTIONAL)
-# =====================================================
-def firecrawl_enrich(url):
-    api_key = os.getenv("FIRECRAWL_API_KEY")
-    if not api_key:
-        return {"status": "firecrawl_disabled", "emails": [], "persons": []}
-
-    try:
-        resp = requests.post(
-            "https://api.firecrawl.dev/v1/scrape",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={"url": url, "formats": ["html"], "limit": 1},
-            timeout=15
-        )
-
-        if resp.status_code != 200:
-            return {"status": "firecrawl_failed", "emails": [], "persons": []}
-
-        html = resp.json().get("data", {}).get("html", "")
-        emails = list(set(EMAIL_REGEX.findall(html)))[:5]
-
-        return {
-            "status": "firecrawl_success",
-            "emails": emails,
-            "persons": []
-        }
-
-    except:
-        return {"status": "firecrawl_error", "emails": [], "persons": []}
 
 
 # =====================================================
@@ -166,56 +129,53 @@ async def main():
         keywords = raw.split(",") if isinstance(raw, str) else raw
 
         region = build_region(country, state, city, postcode)
+        search_queries = [f"{k.strip()} near {region}" for k in keywords if k.strip()]
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
-        seen = set()
-        collected = []
+        run_input = {
+            "searchStringsArray": search_queries,
+            "language": "en",
+            "includeWebResults": False,
+            "maxCrawledPlacesPerSearch": 50,
+            "maxConcurrency": 1
+        }
 
-        for term in keywords:
-            query = f"{term.strip()} near {region}"
+        cc = get_country_code(country)
+        if cc:
+            run_input["countryCode"] = cc
 
-            run_input = {
-                "searchStringsArray": [query],
-                "language": "en",
-                "maxCrawledPlacesPerSearch": 80,
-                "maxConcurrency": 1
-            }
-
-            cc = get_country_code(country)
-            if cc:
-                run_input["countryCode"] = cc
-
+        try:
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input,
                 memory=GOOGLE_MEMORY_MB,
                 timeout=GOOGLE_TIMEOUT_SEC
             )
+        except Exception as e:
+            Actor.log.error(f"Google Maps actor failed: {e}")
+            return
 
-            dataset = client.dataset(run["defaultDatasetId"])
+        dataset = client.dataset(run["defaultDatasetId"])
 
-            # STREAMING iteration (memory safe)
-            for item in dataset.iterate_items():
-                if not postcode_valid(item, postcode):
-                    continue
+        seen = set()
+        collected = []
 
-                key = f"{item.get('title')}_{item.get('address')}"
-                if key not in seen:
-                    seen.add(key)
-                    item["searchQuery"] = term
-                    collected.append(item)
+        # STREAMING (memory safe)
+        for item in dataset.iterate_items():
+            if not postcode_valid(item, postcode):
+                continue
+
+            key = f"{item.get('title')}_{item.get('address')}"
+            if key not in seen:
+                seen.add(key)
+                collected.append(item)
 
         output = []
 
-        for idx, item in enumerate(collected[:max_results]):
+        for item in collected[:max_results]:
 
             if item.get("website"):
-                if USE_FIRECRAWL and idx < MAX_FIRECRAWL:
-                    enrich = firecrawl_enrich(item["website"])
-                    if not enrich.get("emails"):
-                        enrich = simple_web_enrich(item["website"])
-                else:
-                    enrich = simple_web_enrich(item["website"])
+                enrich = simple_web_enrich(item["website"])
             else:
                 enrich = {"status": "no_website", "emails": [], "persons": []}
 
@@ -244,7 +204,6 @@ async def main():
                 ),
                 "latitude": lat,
                 "longitude": lng,
-                "searchQuery": item.get("searchQuery"),
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "contactPersons": enrich.get("persons", [])
