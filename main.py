@@ -37,7 +37,7 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# SIMPLE WEBSITE ENRICHMENT
+# WEBSITE ENRICHMENT
 # =====================================================
 def simple_web_enrich(url):
     if not url:
@@ -61,17 +61,14 @@ def simple_web_enrich(url):
         soup = BeautifulSoup(html, "html.parser")
         emails = []
 
-        # Mailto extraction
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
-        # Visible emails
         emails.extend(EMAIL_REGEX.findall(html))
         emails = list(set(emails))[:5]
 
-        # Basic contact person detection
         persons = []
         for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
             text = tag.get_text().strip()
@@ -102,7 +99,6 @@ def simple_web_enrich(url):
                 if emails:
                     return {"status": "found_contact", "emails": emails, "persons": persons}
 
-    # Domain fallback
     domain = urlparse(url).netloc.replace("www.", "")
     guessed = [f"info@{domain}", f"contact@{domain}"]
 
@@ -123,12 +119,23 @@ async def main():
         max_results = int(data.get("maxResults", 70))
 
         raw = data.get("keywords") or data.get("keyword") or ""
-        keywords = raw.split(",") if isinstance(raw, str) else raw
+
+        # Proper keyword parsing
+        if isinstance(raw, str):
+            keywords = [k.strip() for k in raw.split(",") if k.strip()]
+        elif isinstance(raw, list):
+            keywords = [k.strip() for k in raw if k.strip()]
+        else:
+            keywords = []
+
+        if not keywords:
+            Actor.log.error("❌ No keywords provided!")
+            return
 
         region = build_region(country, state, city, postcode)
-        search_queries = [
-            f"{k.strip()} near {region}" for k in keywords if k.strip()
-        ]
+        search_queries = [f"{k} near {region}" for k in keywords]
+
+        Actor.log.info(f"Search queries: {search_queries}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
@@ -157,7 +164,6 @@ async def main():
         seen = set()
         collected = []
 
-        # STREAMING iteration (memory safe)
         for item in dataset.iterate_items():
             if not postcode_valid(item, postcode):
                 continue
@@ -166,6 +172,12 @@ async def main():
             if key not in seen:
                 seen.add(key)
                 collected.append(item)
+
+        Actor.log.info(f"Collected raw items: {len(collected)}")
+
+        if not collected:
+            Actor.log.warning("⚠ No results found from Google Maps.")
+            return
 
         output = []
 
