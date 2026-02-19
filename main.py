@@ -9,12 +9,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
 # =====================================================
-# CONFIG
-# =====================================================
-GOOGLE_MEMORY_MB = 1024
-GOOGLE_TIMEOUT_SEC = 120
-
-# =====================================================
 # REGEX
 # =====================================================
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -77,7 +71,7 @@ def simple_web_enrich(url):
         emails.extend(EMAIL_REGEX.findall(html))
         emails = list(set(emails))[:5]
 
-        # Person detection (basic heuristic)
+        # Basic contact person detection
         persons = []
         for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
             text = tag.get_text().strip()
@@ -152,11 +146,7 @@ async def main():
 
         try:
             run = client.actor("compass/crawler-google-places").start(
-                run_input=run_input,
-                options={
-                    "memory": GOOGLE_MEMORY_MB,
-                    "timeout": GOOGLE_TIMEOUT_SEC
-                }
+                run_input=run_input
             )
         except Exception as e:
             Actor.log.error(f"Google Maps actor failed: {e}")
