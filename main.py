@@ -2,6 +2,7 @@ from apify import Actor
 from apify_client import ApifyClient
 import asyncio
 import os
+import time
 import requests
 import pycountry
 import re
@@ -19,14 +20,19 @@ EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 def get_country_code(country):
     try:
         return pycountry.countries.lookup(country).alpha_2.lower()
-    except:
+    except Exception:
         return None
 
 
 def build_region(country, state=None, city=None, postcode=None):
     if postcode:
         return f"{postcode}, {country}"
-    parts = [x for x in [city, state, country] if x]
+    parts = []
+    if city:
+        parts.append(city)
+    if state:
+        parts.append(state)
+    parts.append(country)
     return ", ".join(parts)
 
 
@@ -37,7 +43,7 @@ def postcode_valid(item, postcode):
 
 
 # =====================================================
-# WEBSITE ENRICHMENT
+# SIMPLE WEBSITE ENRICHMENT (NO FIRECRAWL)
 # =====================================================
 def simple_web_enrich(url):
     if not url:
@@ -46,67 +52,83 @@ def simple_web_enrich(url):
     if any(x in url for x in ["facebook.com", "instagram.com", "linkedin.com"]):
         return {"status": "skipped_social", "emails": [], "persons": []}
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+    if url.startswith("http://"):
+        url = url.replace("http://", "https://", 1)
 
-    def fetch(target):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    def fetch_page(target_url):
         try:
-            r = requests.get(target, headers=headers, timeout=10)
-            if r.status_code == 200:
-                return r.text
+            resp = requests.get(target_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                return resp.text
         except:
             return None
         return None
 
-    def extract(html):
+    def extract_info(html):
         soup = BeautifulSoup(html, "html.parser")
-        emails = []
 
-        # Mailto
+        # 🔹 Mailto extraction
+        emails = []
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
-        # Visible emails
-        emails.extend(EMAIL_REGEX.findall(html))
+        # 🔹 Visible email extraction
+        visible_emails = EMAIL_REGEX.findall(html)
+        emails.extend(visible_emails)
+
         emails = list(set(emails))[:5]
 
-        # Contact person detection
+        # 🔹 Extract probable person names
         persons = []
         for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
             text = tag.get_text().strip()
             if 2 <= len(text.split()) <= 4:
-                if all(w[0].isupper() for w in text.split() if w.isalpha()):
+                if all(word[0].isupper() for word in text.split() if word.isalpha()):
                     persons.append(text)
 
         persons = list(set(persons))[:3]
 
         return emails, persons
 
-    homepage = fetch(url)
-    if not homepage:
+    # 1️⃣ Homepage
+    homepage_html = fetch_page(url)
+    if not homepage_html:
         return {"status": "blocked", "emails": [], "persons": []}
 
-    emails, persons = extract(homepage)
+    emails, persons = extract_info(homepage_html)
+
     if emails:
         return {"status": "found_homepage", "emails": emails, "persons": persons}
 
-    soup = BeautifulSoup(homepage, "html.parser")
+    # 2️⃣ Try contact/about page
+    soup = BeautifulSoup(homepage_html, "html.parser")
+    contact_url = None
 
     for a in soup.find_all("a", href=True):
-        if "contact" in a["href"].lower() or "about" in a["href"].lower():
+        href = a["href"].lower()
+        if "contact" in href or "about" in href:
             contact_url = urljoin(url, a["href"])
-            contact_page = fetch(contact_url)
-            if contact_page:
-                emails, persons = extract(contact_page)
-                if emails:
-                    return {"status": "found_contact", "emails": emails, "persons": persons}
+            break
 
-    # Fallback
-    domain = urlparse(url).netloc.replace("www.", "")
-    guessed = [f"info@{domain}", f"contact@{domain}"]
+    if contact_url:
+        contact_html = fetch_page(contact_url)
+        if contact_html:
+            emails, persons = extract_info(contact_html)
+            if emails:
+                return {"status": "found_contact", "emails": emails, "persons": persons}
 
-    return {"status": "guessed_domain", "emails": guessed, "persons": []}
+    # 3️⃣ Domain email fallback
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace("www.", "")
+    guessed_emails = [f"info@{domain}", f"contact@{domain}"]
+
+    return {"status": "guessed_domain", "emails": guessed_emails, "persons": []}
 
 
 # =====================================================
@@ -114,6 +136,7 @@ def simple_web_enrich(url):
 # =====================================================
 async def main():
     async with Actor:
+        start_time = time.time()
         data = await Actor.get_input() or {}
 
         country = data.get("country", "")
@@ -127,71 +150,78 @@ async def main():
         if isinstance(raw, str):
             keywords = [k.strip() for k in raw.split(",") if k.strip()]
         elif isinstance(raw, list):
-            keywords = [k.strip() for k in raw if k.strip()]
+            keywords = raw
         else:
             keywords = []
 
-        if not keywords:
-            Actor.log.error("❌ No keywords provided.")
-            return
-
         region = build_region(country, state, city, postcode)
-        search_queries = [f"{k} near {region}" for k in keywords]
 
-        Actor.log.info(f"Search queries: {search_queries}")
+        Actor.log.info(f"Region: {region}")
+        Actor.log.info(f"Keywords: {keywords[:5]}")
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
-
-        run_input = {
-            "searchStringsArray": search_queries,
-            "language": "en",
-            "includeWebResults": False,
-            "maxCrawledPlacesPerSearch": 50,
-            "maxConcurrency": 1
-        }
-
-        cc = get_country_code(country)
-        if cc:
-            run_input["countryCode"] = cc
-
-        try:
-            # 🔥 IMPORTANT: call() waits until finished
-            run = client.actor("compass/crawler-google-places").call(
-                run_input=run_input
-            )
-        except Exception as e:
-            Actor.log.error(f"Google Maps actor failed: {e}")
-            return
-
-        dataset = client.dataset(run["defaultDatasetId"])
 
         seen = set()
         collected = []
 
-        for item in dataset.iterate_items():
-            if not postcode_valid(item, postcode):
-                continue
+        # =================================================
+        # GOOGLE MAPS SEARCH
+        # =================================================
+        for term in keywords:
+            query = f"{term} near {region}"
 
-            key = f"{item.get('title')}_{item.get('address')}"
-            if key not in seen:
-                seen.add(key)
-                collected.append(item)
+            run_input = {
+                "searchStringsArray": [query],
+                "language": "en",
+                "includeWebResults": False,
+                "maxCrawledPlacesPerSearch": 80,
+                "maxConcurrency": 1
+            }
 
-        Actor.log.info(f"Collected raw items: {len(collected)}")
+            cc = get_country_code(country)
+            if cc:
+                run_input["countryCode"] = cc
 
-        if not collected:
-            Actor.log.warning("⚠ No results found.")
-            return
+            run = client.actor("compass/crawler-google-places").start(
+                run_input=run_input
+            )
 
+            dataset_id = run["defaultDatasetId"]
+            run_id = run["id"]
+
+            while True:
+                items = list(client.dataset(dataset_id).iterate_items())
+
+                for item in items:
+                    if not postcode_valid(item, postcode):
+                        continue
+
+                    key = f"{item.get('title')}_{item.get('address')}"
+                    if key not in seen:
+                        seen.add(key)
+                        item["searchQuery"] = term
+                        collected.append(item)
+
+                if time.time() - start_time > 120:
+                    client.run(run_id).abort()
+                    break
+
+                await asyncio.sleep(2)
+
+        Actor.log.info(f"Collected before cap: {len(collected)}")
+
+        # =================================================
+        # OUTPUT + ENRICHMENT
+        # =================================================
         output = []
 
         for item in collected[:max_results]:
+            enrich = {"status": "skipped", "emails": [], "persons": []}
 
             if item.get("website"):
-                enrich = simple_web_enrich(item["website"])
-            else:
-                enrich = {"status": "no_website", "emails": [], "persons": []}
+                enrich = simple_web_enrich(item.get("website"))
 
+            # Latitude & Longitude
             lat = None
             lng = None
 
@@ -217,6 +247,7 @@ async def main():
                 ),
                 "latitude": lat,
                 "longitude": lng,
+                "searchQuery": item.get("searchQuery"),
                 "enrichmentStatus": enrich.get("status"),
                 "emails": enrich.get("emails", []),
                 "contactPersons": enrich.get("persons", [])
