@@ -61,14 +61,17 @@ def simple_web_enrich(url):
         soup = BeautifulSoup(html, "html.parser")
         emails = []
 
+        # Mailto
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
+        # Visible emails
         emails.extend(EMAIL_REGEX.findall(html))
         emails = list(set(emails))[:5]
 
+        # Contact person detection
         persons = []
         for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
             text = tag.get_text().strip()
@@ -99,6 +102,7 @@ def simple_web_enrich(url):
                 if emails:
                     return {"status": "found_contact", "emails": emails, "persons": persons}
 
+    # Fallback
     domain = urlparse(url).netloc.replace("www.", "")
     guessed = [f"info@{domain}", f"contact@{domain}"]
 
@@ -120,7 +124,6 @@ async def main():
 
         raw = data.get("keywords") or data.get("keyword") or ""
 
-        # Proper keyword parsing
         if isinstance(raw, str):
             keywords = [k.strip() for k in raw.split(",") if k.strip()]
         elif isinstance(raw, list):
@@ -129,7 +132,7 @@ async def main():
             keywords = []
 
         if not keywords:
-            Actor.log.error("❌ No keywords provided!")
+            Actor.log.error("❌ No keywords provided.")
             return
 
         region = build_region(country, state, city, postcode)
@@ -152,7 +155,8 @@ async def main():
             run_input["countryCode"] = cc
 
         try:
-            run = client.actor("compass/crawler-google-places").start(
+            # 🔥 IMPORTANT: call() waits until finished
+            run = client.actor("compass/crawler-google-places").call(
                 run_input=run_input
             )
         except Exception as e:
@@ -176,7 +180,7 @@ async def main():
         Actor.log.info(f"Collected raw items: {len(collected)}")
 
         if not collected:
-            Actor.log.warning("⚠ No results found from Google Maps.")
+            Actor.log.warning("⚠ No results found.")
             return
 
         output = []
