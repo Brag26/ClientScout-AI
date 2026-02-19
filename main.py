@@ -11,8 +11,6 @@ from urllib.parse import urljoin, urlparse
 # =====================================================
 # CONFIG
 # =====================================================
-USE_FIRECRAWL = False
-MAX_FIRECRAWL = 15
 GOOGLE_MEMORY_MB = 1024
 GOOGLE_TIMEOUT_SEC = 120
 
@@ -69,14 +67,17 @@ def simple_web_enrich(url):
         soup = BeautifulSoup(html, "html.parser")
         emails = []
 
+        # Mailto extraction
         for a in soup.find_all("a", href=True):
             if "mailto:" in a["href"]:
                 email = a["href"].replace("mailto:", "").split("?")[0]
                 emails.append(email.strip())
 
+        # Visible emails
         emails.extend(EMAIL_REGEX.findall(html))
         emails = list(set(emails))[:5]
 
+        # Person detection (basic heuristic)
         persons = []
         for tag in soup.find_all(["h1", "h2", "h3", "strong", "b"]):
             text = tag.get_text().strip()
@@ -97,6 +98,7 @@ def simple_web_enrich(url):
         return {"status": "found_homepage", "emails": emails, "persons": persons}
 
     soup = BeautifulSoup(homepage, "html.parser")
+
     for a in soup.find_all("a", href=True):
         if "contact" in a["href"].lower() or "about" in a["href"].lower():
             contact_url = urljoin(url, a["href"])
@@ -106,6 +108,7 @@ def simple_web_enrich(url):
                 if emails:
                     return {"status": "found_contact", "emails": emails, "persons": persons}
 
+    # Domain fallback
     domain = urlparse(url).netloc.replace("www.", "")
     guessed = [f"info@{domain}", f"contact@{domain}"]
 
@@ -129,7 +132,9 @@ async def main():
         keywords = raw.split(",") if isinstance(raw, str) else raw
 
         region = build_region(country, state, city, postcode)
-        search_queries = [f"{k.strip()} near {region}" for k in keywords if k.strip()]
+        search_queries = [
+            f"{k.strip()} near {region}" for k in keywords if k.strip()
+        ]
 
         client = ApifyClient(os.environ["APIFY_TOKEN"])
 
@@ -148,8 +153,10 @@ async def main():
         try:
             run = client.actor("compass/crawler-google-places").start(
                 run_input=run_input,
-                memory=GOOGLE_MEMORY_MB,
-                timeout=GOOGLE_TIMEOUT_SEC
+                options={
+                    "memory": GOOGLE_MEMORY_MB,
+                    "timeout": GOOGLE_TIMEOUT_SEC
+                }
             )
         except Exception as e:
             Actor.log.error(f"Google Maps actor failed: {e}")
@@ -160,7 +167,7 @@ async def main():
         seen = set()
         collected = []
 
-        # STREAMING (memory safe)
+        # STREAMING iteration (memory safe)
         for item in dataset.iterate_items():
             if not postcode_valid(item, postcode):
                 continue
