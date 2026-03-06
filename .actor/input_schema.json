@@ -6,32 +6,38 @@
 "country": {
 "title": "Country",
 "type": "string",
-"description": "Country where businesses should be searched (Example: United States, India, Australia)."
+"description": "Country where businesses should be searched (Example: United States, India, Australia)",
+"editor": "textfield"
 },
 "state": {
 "title": "State / Province",
 "type": "string",
-"description": "Optional state or province filter."
+"description": "Optional state or province filter",
+"editor": "textfield"
 },
 "city": {
 "title": "City / Suburb",
 "type": "string",
-"description": "Optional city or suburb filter."
+"description": "Optional city filter",
+"editor": "textfield"
 },
 "postcode": {
 "title": "Postcode / ZIP Code",
 "type": "string",
-"description": "Optional postcode filter."
+"description": "Optional postcode filter",
+"editor": "textfield"
 },
 "keyword": {
 "title": "Business Keywords",
 "type": "string",
-"description": "Comma separated business search keywords. Example: dentists, law firms, real estate agents"
+"description": "Comma separated keywords (Example: dentists, lawyers, real estate agents)",
+"editor": "textfield"
 },
 "maxResults": {
 "title": "Maximum Results",
 "type": "integer",
-"description": "Maximum number of leads to save.",
+"description": "Maximum number of leads to collect",
+"editor": "number",
 "default": 70,
 "minimum": 1,
 "maximum": 500
