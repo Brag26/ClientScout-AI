@@ -1,0 +1,44 @@
+{
+"title": "ClientScout AI – Lead Discovery Input",
+"type": "object",
+"schemaVersion": 1,
+"properties": {
+"country": {
+"title": "Country",
+"type": "string",
+"description": "Country where businesses should be searched (Example: United States, India, Australia)."
+},
+"state": {
+"title": "State / Province",
+"type": "string",
+"description": "Optional state or province filter."
+},
+"city": {
+"title": "City / Suburb",
+"type": "string",
+"description": "Optional city or suburb filter."
+},
+"postcode": {
+"title": "Postcode / ZIP Code",
+"type": "string",
+"description": "Optional postcode filter."
+},
+"keyword": {
+"title": "Business Keywords",
+"type": "string",
+"description": "Comma separated business search keywords. Example: dentists, law firms, real estate agents"
+},
+"maxResults": {
+"title": "Maximum Results",
+"type": "integer",
+"description": "Maximum number of leads to save.",
+"default": 70,
+"minimum": 1,
+"maximum": 500
+}
+},
+"required": [
+"country",
+"keyword"
+]
+}
