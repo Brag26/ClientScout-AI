@@ -1,85 +1,44 @@
 {
-  "title": "ClientScout AI – Input",
-  "description": "Input configuration for ClientScout AI to discover business leads by sector and country.",
-  "type": "object",
-  "schemaVersion": 1,
-  "properties": {
-    "sector": {
-      "title": "Sector",
-      "description": "Select the industry sector for which business leads should be generated.",
-      "type": "string",
-      "editor": "select",
-      "enum": [
-        "Healthcare",
-        "Real Estate",
-        "Manufacturing",
-        "IT & Technology",
-        "Education & Training",
-        "Legal Services",
-        "Financial Services",
-        "Hospitality & Tourism",
-        "Retail & E-commerce",
-        "Food & Beverage",
-        "Construction",
-        "Automotive",
-        "Marketing & Advertising",
-        "Consulting",
-        "Logistics & Transportation",
-        "Beauty & Wellness",
-        "Entertainment & Media",
-        "Agriculture",
-        "Energy & Utilities",
-        "Telecommunications",
-        "Insurance",
-        "Professional Services",
-        "Non-Profit & NGO",
-        "Sports & Fitness"
-      ]
-    },
-
-    "country": {
-      "title": "Country",
-      "description": "Enter the country name where businesses should be discovered (e.g., India, United States, Germany, Australia).",
-      "type": "string",
-      "editor": "textfield"
-    },
-
-    "state": {
-      "title": "State / Province (Optional)",
-      "description": "Optional state or province for more precise targeting.",
-      "type": "string",
-      "editor": "textfield"
-    },
-
-    "city": {
-      "title": "City / Suburb (Optional)",
-      "description": "Optional city or suburb to narrow down the search.",
-      "type": "string",
-      "editor": "textfield"
-    },
-
-    "postcode": {
-      "title": "Postcode / ZIP Code (Optional)",
-      "description": "Optional postcode or ZIP code for highly precise discovery.",
-      "type": "string",
-      "editor": "textfield"
-    },
-
-    "keyword": {
-      "title": "Keyword (Optional)",
-      "description": "Optional keyword to refine the search (e.g., corrugated box, AI startup, dermatologist).",
-      "type": "string",
-      "editor": "textfield"
-    },
-
-    "maxResults": {
-      "title": "Maximum Results",
-      "description": "Maximum number of business leads to collect. Lower values reduce cost.",
-      "type": "integer",
-      "default": 10,
-      "minimum": 1,
-      "maximum": 100
-    }
-  },
-  "required": ["sector", "country"]
+"title": "ClientScout AI – Lead Discovery Input",
+"type": "object",
+"schemaVersion": 1,
+"properties": {
+"country": {
+"title": "Country",
+"type": "string",
+"description": "Country where businesses should be searched (Example: United States, India, Australia)."
+},
+"state": {
+"title": "State / Province",
+"type": "string",
+"description": "Optional state or province filter."
+},
+"city": {
+"title": "City / Suburb",
+"type": "string",
+"description": "Optional city or suburb filter."
+},
+"postcode": {
+"title": "Postcode / ZIP Code",
+"type": "string",
+"description": "Optional postcode filter."
+},
+"keyword": {
+"title": "Business Keywords",
+"type": "string",
+"description": "Comma separated business search keywords. Example: dentists, law firms, real estate agents"
+},
+"maxResults": {
+"title": "Maximum Results",
+"type": "integer",
+"description": "Maximum number of leads to save.",
+"default": 70,
+"minimum": 1,
+"maximum": 500
+}
+},
+"required": [
+"country",
+"keyword"
+]
 }
